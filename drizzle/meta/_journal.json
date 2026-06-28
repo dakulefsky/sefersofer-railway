@@ -1,5 +1,27 @@
 {
   "version": "7",
   "dialect": "mysql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1782364002307,
+      "tag": "0000_strange_toxin",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1782447187001,
+      "tag": "0001_cultured_shriek",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1782447211736,
+      "tag": "0002_clear_chamber",
+      "breakpoints": true
+    }
+  ]
 }

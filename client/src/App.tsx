@@ -5,13 +5,21 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import NewTranscription from "./pages/NewTranscription";
+import OcrAnalytics from "./pages/OcrAnalytics";
+import AdminClients from "./pages/AdminClients";
+import Auth from "./pages/Auth";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/404"} component={NotFound} />
+      <Route path="/auth" component={Auth} />
+      <Route path="/" component={Home} />
+      <Route path="/new" component={NewTranscription} />
+      <Route path="/analytics" component={OcrAnalytics} />
+      <Route path="/admin/clients" component={AdminClients} />
+      <Route path="/404" component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />
     </Switch>

@@ -43,3 +43,39 @@ export const adminProcedure = t.procedure.use(
     });
   }),
 );
+
+export const gmProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+
+    if (!ctx.user || (ctx.user.role !== 'gm' && ctx.user.role !== 'admin')) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only General Managers and Admins can access this" });
+    }
+
+    return next({
+      ctx: {
+        ...ctx,
+        user: ctx.user,
+      },
+    });
+  }),
+);
+
+export const employeeProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+
+    if (!ctx.user || (ctx.user.role !== 'employee' && ctx.user.role !== 'gm' && ctx.user.role !== 'admin')) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only Employees and above can access this" });
+    }
+
+    return next({
+      ctx: {
+        ...ctx,
+        user: ctx.user,
+      },
+    });
+  }),
+);
+
+

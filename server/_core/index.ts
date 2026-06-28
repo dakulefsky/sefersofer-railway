@@ -41,7 +41,12 @@ async function startServer() {
     "/api/trpc",
     createExpressMiddleware({
       router: appRouter,
-      createContext,
+      createContext: async (opts) => {
+        return createContext({
+          req: opts.req as any,
+          res: opts.res as any,
+        });
+      },
     })
   );
   // development mode uses Vite, production mode uses static files
