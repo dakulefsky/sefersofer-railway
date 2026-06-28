@@ -22,6 +22,8 @@ import {
   getUploadUrl,
   buildLearningPrompt,
 } from "./db";
+import { invokeLLM } from "./_core/llm";
+import { supabase } from "./_core/supabase";
 
 export const appRouter = router({
 
@@ -114,6 +116,174 @@ export const appRouter = router({
           input.storagePath,
           input.pageLabel
         );
+      }),
+
+    /**
+     * Transcribe a page using the vision LLM with adaptive learning.
+     * 
+     * Flow:
+     *   1. Fetch the image URL from Supabase Storage
+     *   2. Get the adaptive learning prompt based on user's correction history
+     *   3. Call the LLM with the image and learning prompt
+     *   4. Parse the LLM response (JSON with regions and words)
+     *   5. Save the OCR results to the database
+     */
+    transcribe: protectedProcedure
+      .input(z.object({ pageId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        // Fetch page to get storage path and job ID
+        const { data: pageData } = await supabase
+          .from("pages")
+          .select("id, job_id, storage_path, page_order, page_label")
+          .eq("id", input.pageId)
+          .single();
+
+        if (!pageData) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Page not found" });
+        }
+
+        // Get the image URL from Supabase Storage
+        const { data: signedUrlData } = await supabase.storage
+          .from("manuscripts")
+          .createSignedUrl(pageData.storage_path, 3600);
+
+        if (!signedUrlData?.signedUrl) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Could not generate image URL",
+          });
+        }
+
+        // Get adaptive learning prompt
+        const learningPrompt = await buildLearningPrompt(
+          ctx.user!.id,
+          pageData.job_id
+        );
+
+        // Call LLM with vision
+        const llmResponse = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: learningPrompt,
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: 'Transcribe this Hebrew manuscript page. Return a JSON object with a "regions" array, where each region has "regionType" (main, margin_right, margin_left, margin_top, margin_bottom, interlinear), "anchorWordIndex" (for interlinear only), and "words" array with {wordIndex, text, confidence, isFlagged, isScribble, isInsertion}.',
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: signedUrlData.signedUrl,
+                    detail: "high",
+                  },
+                },
+              ],
+            },
+          ],
+          responseFormat: {
+            type: "json_schema",
+            json_schema: {
+              name: "ocr_result",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  regions: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        regionType: {
+                          type: "string",
+                          enum: [
+                            "main",
+                            "margin_right",
+                            "margin_left",
+                            "margin_top",
+                            "margin_bottom",
+                            "interlinear",
+                          ],
+                        },
+                        anchorWordIndex: { type: "number" },
+                        words: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: {
+                              wordIndex: { type: "number" },
+                              text: { type: "string" },
+                              confidence: { type: "number" },
+                              isFlagged: { type: "boolean" },
+                              isScribble: { type: "boolean" },
+                              isInsertion: { type: "boolean" },
+                            },
+                            required: ["wordIndex", "text"],
+                          },
+                        },
+                      },
+                      required: ["regionType", "words"],
+                    },
+                  },
+                },
+                required: ["regions"],
+              },
+            },
+          },
+        });
+
+        // Parse LLM response
+        const responseText =
+          typeof llmResponse.choices[0].message.content === "string"
+            ? llmResponse.choices[0].message.content
+            : JSON.stringify(llmResponse.choices[0].message.content);
+
+        let ocrResult;
+        try {
+          ocrResult = JSON.parse(responseText);
+        } catch (e) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to parse LLM response",
+          });
+        }
+
+        // Save OCR results
+        const createdRegions = [];
+        for (const r of ocrResult.regions) {
+          const region = await createTextRegion(input.pageId, r.regionType, {
+            anchorWordIndex: r.anchorWordIndex,
+          });
+
+          if (r.words && r.words.length > 0) {
+            await insertWords(
+              r.words.map((w: any) => ({
+                pageId: input.pageId,
+                regionId: region.id,
+                wordIndex: w.wordIndex,
+                text: w.text,
+                confidence: w.confidence ?? null,
+                isFlagged: w.isFlagged ?? false,
+                isScribble: w.isScribble ?? false,
+                isInsertion: w.isInsertion ?? false,
+              }))
+            );
+          }
+
+          createdRegions.push(region);
+        }
+
+        return {
+          success: true,
+          regionCount: createdRegions.length,
+          wordCount: ocrResult.regions.reduce(
+            (sum: number, r: any) => sum + (r.words?.length ?? 0),
+            0
+          ),
+        };
       }),
 
     /**
@@ -273,6 +443,8 @@ export const appRouter = router({
         const prompt = await buildLearningPrompt(ctx.user!.id, input.jobId);
         return { prompt };
       }),
+
+
   }),
 });
 

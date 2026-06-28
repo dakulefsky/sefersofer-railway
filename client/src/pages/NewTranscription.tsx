@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Toast } from "@/components/ui/Toast";
 import { useToast } from "@/hooks/useToast";
+import { supabaseBrowser } from "@/lib/supabase-browser";
 
 function RecentJobBadge({
   job,
@@ -62,10 +63,26 @@ export default function NewTranscription() {
     },
   });
 
-  const transcribe = {
-    mutate: () => {},
-    isPending: false,
-  };
+  // Upload image to Supabase Storage
+  const getUploadUrl = trpc.pages.getUploadUrl.useMutation();
+  const createPage = trpc.pages.create.useMutation();
+  const transcribe = trpc.pages.transcribe.useMutation({
+    onSuccess: (result: any) => {
+      showToast(
+        `Transcription complete: ${result.wordCount} words in ${result.regionCount} regions`,
+        "success"
+      );
+      // Navigate to review page
+      if (selectedPageId) {
+        navigate(`/review/${selectedJobId}/${selectedPageId}`);
+      }
+    },
+    onError: (error: any) => {
+      showToast(`Transcription failed: ${error.message}`, "error");
+    },
+  });
+
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
 
   const allJobs = jobs.data ?? [];
   const recentJobs = [...allJobs]
@@ -91,12 +108,56 @@ export default function NewTranscription() {
 
   async function handleSubmit() {
     if (!selectedFile || !selectedJobId) return;
-    // TODO: Implement transcription mutation when OCR router is ready
-    showToast("Transcription feature coming soon - OCR router not yet implemented", "info");
+
+    try {
+      // Step 1: Get signed upload URL
+      const uploadUrlResult = await getUploadUrl.mutateAsync({
+        jobId: selectedJobId,
+        filename: selectedFile.name,
+      });
+
+      // Step 2: Upload image to Supabase Storage
+      const { error: uploadError } = await supabaseBrowser.storage
+        .from("manuscripts")
+        .uploadToSignedUrl(
+          uploadUrlResult.storagePath,
+          uploadUrlResult.signedUrl,
+          selectedFile
+        );
+
+      if (uploadError) {
+        showToast(`Upload failed: ${uploadError.message}`, "error");
+        return;
+      }
+
+      // Step 3: Create page record
+      const pageResult = await createPage.mutateAsync({
+        jobId: selectedJobId,
+        pageOrder: 1, // TODO: Calculate actual page order
+        storagePath: uploadUrlResult.storagePath,
+        pageLabel: pageLabel || undefined,
+      });
+
+      setSelectedPageId(pageResult.id);
+
+      // Step 4: Trigger OCR transcription
+      await transcribe.mutateAsync({
+        pageId: pageResult.id,
+      });
+    } catch (error: any) {
+      showToast(
+        `Error: ${error.message || "Unknown error during transcription"}`,
+        "error"
+      );
+    }
   }
 
   const canSubmit =
-    selectedJobId && selectedFile && !transcribe.isPending;
+    selectedJobId &&
+    selectedFile &&
+    !transcribe.isPending &&
+    !getUploadUrl.isPending &&
+    !createPage.isPending;
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -294,7 +355,13 @@ export default function NewTranscription() {
             disabled={!canSubmit}
             className="flex-1 px-4 py-3 bg-teal-700 text-white rounded-xl hover:bg-teal-800 disabled:opacity-50 transition font-semibold text-sm"
           >
-            {transcribe.isPending ? "Transcribing…" : "Begin transcription"}
+            {getUploadUrl.isPending || createPage.isPending || transcribe.isPending
+              ? getUploadUrl.isPending
+                ? "Preparing…"
+                : createPage.isPending
+                ? "Creating page…"
+                : "Transcribing…"
+              : "Begin transcription"}
           </button>
         </div>
       </div>

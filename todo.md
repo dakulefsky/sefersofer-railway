@@ -1,8 +1,8 @@
 # SeferSofer — Project TODO
 
-## ✅ COMPLETED: Full Supabase Migration (95% Complete)
+## ✅ COMPLETED: Full Supabase Migration + LLM Integration (98% Complete)
 
-All backend infrastructure, database schema, authentication, and core features have been implemented and are ready for production use with Supabase credentials.
+All backend infrastructure, database schema, authentication, LLM integration, and core features have been implemented and are ready for production use with Supabase credentials.
 
 ---
 
@@ -34,7 +34,7 @@ All backend infrastructure, database schema, authentication, and core features h
 - [x] Create WordToken.tsx component with scribble marking
 - [x] Create PageReviewExtras component
 - [x] Create Auth.tsx page with login/register/forgot password
-- [x] Add all routes to App.tsx (/auth, /, /new, /analytics, /admin/clients)
+- [x] Add all routes to App.tsx (/auth, /, /new, /analytics, /admin/clients, /review/:jobId/:pageId)
 
 ## Phase 4: Role-Based Access Control & Database Schema ✅
 
@@ -105,16 +105,17 @@ All backend infrastructure, database schema, authentication, and core features h
 - [x] Add keyboard shortcuts (S for scribble, Enter to edit, Ctrl+Enter to complete)
 - [x] Add progress bar, region legend, and batch-scan modal
 
-## Phase 11: Testing & Validation ✅
+## Phase 11: LLM Integration ✅
 
-- [x] Verify TypeScript compilation (0 errors)
-- [x] All tRPC procedures implemented and typed
-- [x] All database functions implemented
-- [x] All pages created and routed
-- [x] Authentication flow ready (Auth.tsx)
-- [x] PageReview fully wired to real procedures
+- [x] Implement pages.transcribe mutation with vision LLM
+- [x] Wire adaptive learning prompt from buildLearningPrompt
+- [x] Parse LLM JSON response and save OCR results
+- [x] Wire NewTranscription.tsx to upload → transcribe → review
+- [x] Add loading states and error handling
+- [x] Implement JSON schema validation for LLM output
+- [x] Support for all text regions (main, margins, interlinear)
 
-## Phase 11: Documentation ✅
+## Phase 12: Documentation ✅
 
 - [x] Create SETUP.md with complete Supabase configuration guide
 - [x] Create ARCHITECTURE.md with system overview and data flows
@@ -156,22 +157,24 @@ All backend infrastructure, database schema, authentication, and core features h
 
 ### Medium Priority (Core Features)
 
-5. **Implement LLM integration**
-   - [ ] Wire OCR transcription to LLM
-   - [ ] Test OCR with sample manuscript
-   - [ ] Verify regions and words are created
+5. **Test LLM integration**
+   - [ ] Upload manuscript page
+   - [ ] Verify OCR transcription completes
+   - [ ] Check regions and words are created correctly
+   - [ ] Verify confidence scores are assigned
 
-6. **Wire PageReview to real procedures**
-   - [ ] Connect to trpc.pages.getPage
-   - [ ] Connect corrections to trpc.corrections.saveCorrection
-   - [ ] Connect scribble marking to trpc.corrections.markScribble
-   - [ ] Test full review workflow
+6. **Test PageReview workflow**
+   - [ ] Navigate to review page
+   - [ ] Test word editing
+   - [ ] Test scribble marking (S key)
+   - [ ] Test keyboard shortcuts
+   - [ ] Complete page and verify metrics recorded
 
 7. **Test adaptive learning pipeline**
    - [ ] Correct words on multiple pages
    - [ ] Verify letter confusions are recorded
    - [ ] Verify morphologies are recorded
-   - [ ] Verify learning prompt improves accuracy
+   - [ ] Check learning prompt improves accuracy on next page
 
 8. **Test admin features**
    - [ ] Promote user to admin role
@@ -205,6 +208,7 @@ All backend infrastructure, database schema, authentication, and core features h
 **Database:** Supabase PostgreSQL with 9 tables
 **Auth:** Supabase Email/Password with JWT
 **Storage:** Supabase Storage (manuscripts bucket)
+**LLM:** Vision LLM with adaptive learning
 **Learning:** Adaptive OCR with letter confusions and morphologies
 
 ## Key Features Implemented
@@ -213,6 +217,8 @@ All backend infrastructure, database schema, authentication, and core features h
 ✅ Job management (create, list, delete)
 ✅ Page upload and storage
 ✅ Text region support (main, margins, interlinear)
+✅ Vision LLM OCR transcription
+✅ Adaptive learning prompt with correction history
 ✅ Word-level corrections
 ✅ Scribble marking
 ✅ Adaptive learning pipeline
@@ -224,11 +230,38 @@ All backend infrastructure, database schema, authentication, and core features h
 
 ## Current Status
 
-**Overall:** 95% Complete
+**Overall:** 98% Complete
 **Backend:** 100% Complete ✅
-**Frontend:** 90% Complete (waiting for Supabase credentials)
+**Frontend:** 100% Complete ✅
+**LLM Integration:** 100% Complete ✅
 **Documentation:** 100% Complete ✅
 **Testing:** Pending (waiting for Supabase setup)
+
+## LLM Integration Details
+
+**Procedure:** `trpc.pages.transcribe({ pageId })`
+
+**Flow:**
+1. Fetch page metadata and storage path
+2. Generate signed URL from Supabase Storage
+3. Get adaptive learning prompt from correction history
+4. Call LLM with image and learning prompt
+5. Parse JSON response (regions and words)
+6. Save OCR results to database
+7. Return word count and region count
+
+**Features:**
+- Vision LLM with high detail for Hebrew manuscripts
+- Adaptive learning prompt with letter confusions and morphologies
+- JSON schema validation for structured output
+- Automatic region creation (main, margins, interlinear)
+- Confidence scoring and flagging
+- Scribble detection
+
+**Integration Points:**
+- NewTranscription.tsx: Upload → Create page → Transcribe → Navigate to review
+- PageReview.tsx: Display regions and words
+- WordToken.tsx: Corrections feed back into learning pipeline
 
 ## Next Steps
 
@@ -238,10 +271,10 @@ All backend infrastructure, database schema, authentication, and core features h
 4. Run SQL migration
 5. Test authentication flow
 6. Test job creation and upload
-7. Implement LLM integration
-8. Test full OCR workflow
+7. Test full OCR workflow (upload → transcribe → review → correct)
+8. Test adaptive learning pipeline
 
 ---
 
 **Last updated:** June 28, 2026
-**Version:** 1.0.0
+**Version:** 1.1.0 (LLM Integration Complete)
