@@ -37,18 +37,20 @@ export function WordToken({ word, jobId, pageId, onUpdate }: WordTokenProps) {
   const [showTooltip, setShowTooltip] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // TODO: Wire markScribble mutation once corrections router is implemented
-  const markScribble = {
-    mutate: () => {},
-    isSuccess: false,
-    isPending: false,
-  };
+  // Wire markScribble mutation
+  const markScribble = trpc.corrections.markScribble.useMutation({
+    onSuccess: () => {
+      onUpdate?.();
+    },
+  });
 
-  // TODO: Wire saveCorrection mutation once corrections router is implemented
-  const saveCorrection = {
-    mutate: () => {},
-    isPending: false,
-  };
+  // Wire saveCorrection mutation
+  const saveCorrection = trpc.corrections.saveCorrection.useMutation({
+    onSuccess: () => {
+      setEditing(false);
+      onUpdate?.();
+    },
+  });
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (editing) return;
@@ -64,7 +66,12 @@ export function WordToken({ word, jobId, pageId, onUpdate }: WordTokenProps) {
   }
 
   function handleMarkScribble() {
-    markScribble.mutate();
+    markScribble.mutate({
+      wordId: word.id,
+      jobId,
+      pageId,
+      wordIndex: word.index,
+    });
   }
 
   function handleSave() {
@@ -72,10 +79,15 @@ export function WordToken({ word, jobId, pageId, onUpdate }: WordTokenProps) {
       setEditing(false);
       return;
     }
-    saveCorrection.mutate();
+    saveCorrection.mutate({
+      wordId: word.id,
+      jobId,
+      originalText: word.text,
+      correctedText: editValue.trim(),
+    });
   }
 
-  const isScribble = word.isScribble || markScribble.isSuccess;
+  const isScribble = word.isScribble || markScribble.data?.success;
   const isFlagged = word.isFlagged && !isScribble;
   const confidence = word.confidence;
 
@@ -162,8 +174,9 @@ export function WordToken({ word, jobId, pageId, onUpdate }: WordTokenProps) {
                 e.stopPropagation();
                 handleMarkScribble();
               }}
+              disabled={markScribble.isPending}
               title="Mark as scribble/noise (S)"
-              className="text-[10px] text-stone-300 hover:text-red-400 transition px-1"
+              className="text-[10px] text-stone-300 hover:text-red-400 transition px-1 disabled:opacity-50"
             >
               ✕
             </button>

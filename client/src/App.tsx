@@ -9,6 +9,7 @@ import NewTranscription from "./pages/NewTranscription";
 import OcrAnalytics from "./pages/OcrAnalytics";
 import AdminClients from "./pages/AdminClients";
 import Auth from "./pages/Auth";
+import PageReview from "./pages/PageReview";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -19,6 +20,7 @@ function Router() {
       <Route path="/new" component={NewTranscription} />
       <Route path="/analytics" component={OcrAnalytics} />
       <Route path="/admin/clients" component={AdminClients} />
+      <Route path="/review/:jobId/:pageId" component={PageReview} />
       <Route path="/404" component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />
