@@ -84,7 +84,7 @@ export default function OcrAnalytics() {
   }));
 
   const confusionData = (letterConfusions.data ?? []).map((c: any) => ({
-    pair: `${c.originalLetter}→${c.correctedLetter}`,
+    pair: `${c.original_letter}→${c.corrected_letter}`,
     count: c.count,
   }));
 

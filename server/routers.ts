@@ -24,6 +24,7 @@ import {
 } from "./db";
 import { invokeLLM } from "./_core/llm";
 import { supabase } from "./_core/supabase";
+import { transcribeAndParse } from "./transkribus";
 
 export const appRouter = router({
 
@@ -154,101 +155,114 @@ export const appRouter = router({
           });
         }
 
-        // Get adaptive learning prompt
-        const learningPrompt = await buildLearningPrompt(
-          ctx.user!.id,
-          pageData.job_id
-        );
+        // ── LAYER 1: Transkribus HTR ──────────────────────────────────────
+        // Real letter-by-letter recognition. No hallucination.
+        // Uses the Hebrew model specified in TRANSKRIBUS_MODEL_ID env var.
+        // Falls back to LLM-only if Transkribus is not configured yet.
 
-        // Call LLM with vision
-        const llmResponse = await invokeLLM({
-          messages: [
-            {
-              role: "system",
-              content: learningPrompt,
-            },
-            {
-              role: "user",
-              content: [
+        let ocrResult: { regions: any[] };
+
+        const transkribusConfigured =
+          process.env.TRANSKRIBUS_EMAIL &&
+          process.env.TRANSKRIBUS_PASSWORD &&
+          process.env.TRANSKRIBUS_MODEL_ID;
+
+        if (transkribusConfigured) {
+          try {
+            // Transkribus needs a publicly accessible URL — use the signed URL
+            const parsed = await transcribeAndParse(signedUrlData.signedUrl);
+            ocrResult = parsed;
+          } catch (err: any) {
+            console.error("[Transkribus] HTR failed, falling back to LLM:", err.message);
+            ocrResult = await runLlmFallback(
+              signedUrlData.signedUrl,
+              ctx.user!.id,
+              pageData.job_id
+            );
+          }
+        } else {
+          // Transkribus not yet configured — use LLM until credentials are added
+          ocrResult = await runLlmFallback(
+            signedUrlData.signedUrl,
+            ctx.user!.id,
+            pageData.job_id
+          );
+        }
+
+        // ── LAYER 2: AI context correction ───────────────────────────────
+        // Now that Transkribus has identified the actual letters, the AI
+        // reviews the word-level output for Hebrew/Aramaic context errors.
+        // It does NOT look at the image — it only fixes what Transkribus produced.
+        // This catches real errors like: letters that form a non-existent word,
+        // common abbreviations that were misread, or garbled Aramaic terms.
+
+        try {
+          const allWords = ocrResult.regions
+            .flatMap((r: any) => r.words ?? [])
+            .map((w: any) => w.text)
+            .join(" ");
+
+          if (allWords.trim().length > 0) {
+            const learningPrompt = await buildLearningPrompt(
+              ctx.user!.id,
+              pageData.job_id
+            );
+
+            const contextResponse = await invokeLLM({
+              messages: [
                 {
-                  type: "text",
-                  text: 'Transcribe this Hebrew manuscript page. Return a JSON object with a "regions" array, where each region has "regionType" (main, margin_right, margin_left, margin_top, margin_bottom, interlinear), "anchorWordIndex" (for interlinear only), and "words" array with {wordIndex, text, confidence, isFlagged, isScribble, isInsertion}.',
+                  role: "system",
+                  content: `You are a Hebrew/Aramaic Torah scholar reviewing an OCR transcription of handwritten Torah study notes.
+The OCR engine has already read the letters directly from the image — do NOT change words based on what you think "should" be written.
+ONLY fix a word if:
+1. It contains a sequence of Hebrew letters that cannot possibly form any Hebrew or Aramaic word or abbreviation
+2. You are more than 90% confident in the correction
+3. The correction is a single letter change (not a whole word replacement)
+
+Common Torah abbreviations to PRESERVE exactly as-is: ע"ש, שם, ז"ל, ע"ב, כ"כ, רמב"ם, רש"י, תוס', ר"ן, רא"ש, דהיינו
+
+${learningPrompt}
+
+Return ONLY a JSON object: { "corrections": [ { "original": "word", "corrected": "word", "wordIndex": 0 } ] }
+If no corrections are needed, return { "corrections": [] }`,
                 },
                 {
-                  type: "image_url",
-                  image_url: {
-                    url: signedUrlData.signedUrl,
-                    detail: "high",
-                  },
+                  role: "user",
+                  content: `Review this OCR output for context errors:\n\n${allWords}`,
                 },
               ],
-            },
-          ],
-          responseFormat: {
-            type: "json_schema",
-            json_schema: {
-              name: "ocr_result",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  regions: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        regionType: {
-                          type: "string",
-                          enum: [
-                            "main",
-                            "margin_right",
-                            "margin_left",
-                            "margin_top",
-                            "margin_bottom",
-                            "interlinear",
-                          ],
-                        },
-                        anchorWordIndex: { type: "number" },
-                        words: {
-                          type: "array",
-                          items: {
-                            type: "object",
-                            properties: {
-                              wordIndex: { type: "number" },
-                              text: { type: "string" },
-                              confidence: { type: "number" },
-                              isFlagged: { type: "boolean" },
-                              isScribble: { type: "boolean" },
-                              isInsertion: { type: "boolean" },
-                            },
-                            required: ["wordIndex", "text"],
-                          },
-                        },
-                      },
-                      required: ["regionType", "words"],
-                    },
-                  },
-                },
-                required: ["regions"],
-              },
-            },
-          },
-        });
+              responseFormat: { type: "json_object" },
+            });
 
-        // Parse LLM response
-        const responseText =
-          typeof llmResponse.choices[0].message.content === "string"
-            ? llmResponse.choices[0].message.content
-            : JSON.stringify(llmResponse.choices[0].message.content);
+            const contextText =
+              typeof contextResponse.choices[0].message.content === "string"
+                ? contextResponse.choices[0].message.content
+                : "{}";
 
-        let ocrResult;
-        try {
-          ocrResult = JSON.parse(responseText);
-        } catch (e) {
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Failed to parse LLM response",
-          });
+            const contextResult = JSON.parse(contextText);
+
+            // Apply AI corrections to the OCR output
+            if (contextResult.corrections?.length > 0) {
+              for (const correction of contextResult.corrections) {
+                for (const region of ocrResult.regions) {
+                  for (const word of region.words ?? []) {
+                    if (
+                      word.wordIndex === correction.wordIndex &&
+                      word.text === correction.original
+                    ) {
+                      // Mark as AI-corrected with slightly lower confidence
+                      word.text = correction.corrected;
+                      word.confidence = Math.min(word.confidence ?? 0.8, 0.85);
+                      word.isFlagged = true; // flag for human review
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (contextErr: any) {
+          // Context correction failing is non-fatal — Transkribus output stands
+          console.warn("[AI Context] Context correction failed:", contextErr.message);
         }
 
         // Save OCR results
@@ -449,3 +463,92 @@ export const appRouter = router({
 });
 
 export type AppRouter = typeof appRouter;
+
+// ─── LLM fallback ────────────────────────────────────────────────────────────
+// Used when Transkribus credentials are not yet configured.
+// Once TRANSKRIBUS_EMAIL, TRANSKRIBUS_PASSWORD, TRANSKRIBUS_MODEL_ID are set
+// in your .env, this function is no longer called.
+
+async function runLlmFallback(
+  imageUrl: string,
+  userId: string,
+  jobId: string
+): Promise<{ regions: any[] }> {
+  const learningPrompt = await buildLearningPrompt(userId, jobId);
+
+  const llmResponse = await invokeLLM({
+    messages: [
+      { role: "system", content: learningPrompt },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: 'Transcribe this handwritten Hebrew Torah study page. Return a JSON object with a "regions" array. Each region has "regionType" (main, margin_right, margin_left, margin_top, margin_bottom, interlinear), optional "anchorWordIndex" for interlinear, and "words" array with objects containing: wordIndex (number), text (string), confidence (0-1), isFlagged (boolean), isScribble (boolean), isInsertion (boolean). Read right-to-left. Preserve exact spelling including abbreviations like רמב"ם, רש"י, תוס\'.',
+          },
+          {
+            type: "image_url",
+            image_url: { url: imageUrl, detail: "high" },
+          },
+        ],
+      },
+    ],
+    responseFormat: {
+      type: "json_schema",
+      json_schema: {
+        name: "ocr_result",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            regions: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  regionType: {
+                    type: "string",
+                    enum: ["main", "margin_right", "margin_left", "margin_top", "margin_bottom", "interlinear"],
+                  },
+                  anchorWordIndex: { type: "number" },
+                  words: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        wordIndex: { type: "number" },
+                        text: { type: "string" },
+                        confidence: { type: "number" },
+                        isFlagged: { type: "boolean" },
+                        isScribble: { type: "boolean" },
+                        isInsertion: { type: "boolean" },
+                      },
+                      required: ["wordIndex", "text", "confidence", "isFlagged", "isScribble", "isInsertion"],
+                    },
+                  },
+                },
+                required: ["regionType", "words"],
+              },
+            },
+          },
+          required: ["regions"],
+        },
+      },
+    },
+  });
+
+  const responseText =
+    typeof llmResponse.choices[0].message.content === "string"
+      ? llmResponse.choices[0].message.content
+      : JSON.stringify(llmResponse.choices[0].message.content);
+
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Failed to parse LLM transcription response",
+    });
+  }
+}
+
