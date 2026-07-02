@@ -42,7 +42,7 @@ async function getPublicKeyFromJWKS(keyId: string) {
       throw new Error("VITE_SUPABASE_URL not configured");
     }
 
-    const jwksUrl = `${supabaseUrl}/.well-known/jwks.json`;
+    const jwksUrl = `${supabaseUrl}/auth/v1/.well-known/jwks.json`;
     console.log("[Auth] Fetching JWKS from:", jwksUrl);
 
     const response = await fetch(jwksUrl);

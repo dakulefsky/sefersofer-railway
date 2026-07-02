@@ -116,19 +116,25 @@ export default function NewTranscription() {
         filename: selectedFile.name,
       });
 
-      // Step 2: Upload image to Supabase Storage
-      const { error: uploadError } = await supabaseBrowser.storage
-        .from("manuscripts")
-        .uploadToSignedUrl(
-          uploadUrlResult.storagePath,
-          uploadUrlResult.signedUrl,
-          selectedFile
-        );
+      // Step 2: Upload image to Supabase Storage using the signed URL
+      // The signed URL already contains the token, so we just need to PUT the file
+      const response = await fetch(uploadUrlResult.signedUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": selectedFile.type || "application/octet-stream",
+        },
+        body: selectedFile,
+      });
 
-      if (uploadError) {
-        showToast(`Upload failed: ${uploadError.message}`, "error");
+      if (!response.ok) {
+        const errorText = await response.text();
+        showToast(`Upload failed: ${response.status} ${errorText}`, "error");
         return;
       }
+
+      const uploadError = null;
+
+      // uploadError is now null (handled above), so we can continue
 
       // Step 3: Create page record
       const pageResult = await createPage.mutateAsync({
