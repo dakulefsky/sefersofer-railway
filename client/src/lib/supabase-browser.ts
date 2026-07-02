@@ -9,4 +9,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabaseBrowser = createClient(supabaseUrl, supabaseAnonKey);
+// Enable session persistence in localStorage
+const authOptions = {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: typeof window !== "undefined" ? window.localStorage : undefined,
+  },
+};
+
+export const supabaseBrowser = createClient(supabaseUrl, supabaseAnonKey, authOptions);

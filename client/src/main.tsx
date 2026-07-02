@@ -1,14 +1,27 @@
 import { trpc } from "@/lib/trpc";
-import { COOKIE_NAME, UNAUTHED_ERR_MSG } from '@shared/const';
+import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
-import { getLoginUrl } from "./const";
+import { AuthProvider } from "./lib/auth";
+import { supabaseBrowser } from "./lib/supabase-browser";
 import "./index.css";
 
-const queryClient = new QueryClient();
+// Initialize Supabase auth listeners
+supabaseBrowser.auth.onAuthStateChange((_event, session) => {
+  console.log("[Auth] State changed:", _event, session?.user?.email);
+});
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 5 * 60 * 1000, // 5 minutes
+    },
+  },
+});
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
@@ -18,7 +31,7 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
 
   if (!isUnauthorized) return;
 
-  window.location.href = getLoginUrl();
+  window.location.href = "/auth";
 };
 
 queryClient.getQueryCache().subscribe(event => {
@@ -42,23 +55,28 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: "/api/trpc",
       transformer: superjson,
-      headers() {
-        // Preview auto-login fallback: when the browser blocks iframe cookies
-        // (Safari ITP / private browsing / WebView), the runtime mirrors the
-        // session into sessionStorage so we can forward it as a Bearer token.
-        // The regular OAuth cookie flow keeps working and takes priority server-side.
+      async headers() {
+        // Always fetch fresh session token for each request
         try {
-          const raw = sessionStorage.getItem("manus-cookie");
-          if (raw) {
-            const prefix = `${COOKIE_NAME}=`;
-            const pair = raw.split(";").find(s => s.trim().startsWith(prefix));
-            const token = pair?.trim().slice(prefix.length);
-            if (token) {
-              return { Authorization: `Bearer ${token}` };
-            }
+          const { data, error } = await supabaseBrowser.auth.getSession();
+          
+          if (error) {
+            console.warn("[tRPC] Failed to get session:", error.message);
+            return {};
           }
-        } catch {
-          // sessionStorage unavailable
+
+          const token = data?.session?.access_token;
+          
+          if (token) {
+            console.log("[tRPC] Sending Authorization header with token:", token.substring(0, 20) + "...");
+            return {
+              Authorization: `Bearer ${token}`,
+            };
+          } else {
+            console.warn("[tRPC] No session token available");
+          }
+        } catch (err) {
+          console.error("[tRPC] Exception getting session:", err);
         }
         return {};
       },
@@ -73,9 +91,11 @@ const trpcClient = trpc.createClient({
 });
 
 createRoot(document.getElementById("root")!).render(
-  <trpc.Provider client={trpcClient} queryClient={queryClient}>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </trpc.Provider>
+  <AuthProvider>
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </trpc.Provider>
+  </AuthProvider>
 );

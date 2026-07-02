@@ -4,6 +4,7 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { RequireAuth } from "./lib/auth";
 import Home from "./pages/Home";
 import NewTranscription from "./pages/NewTranscription";
 import OcrAnalytics from "./pages/OcrAnalytics";
@@ -12,15 +13,14 @@ import Auth from "./pages/Auth";
 import PageReview from "./pages/PageReview";
 
 function Router() {
-  // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
       <Route path="/auth" component={Auth} />
-      <Route path="/" component={Home} />
-      <Route path="/new" component={NewTranscription} />
-      <Route path="/analytics" component={OcrAnalytics} />
-      <Route path="/admin/clients" component={AdminClients} />
-      <Route path="/review/:jobId/:pageId" component={PageReview} />
+      <Route path="/" component={() => <RequireAuth><Home /></RequireAuth>} />
+      <Route path="/new" component={() => <RequireAuth><NewTranscription /></RequireAuth>} />
+      <Route path="/analytics" component={() => <RequireAuth><OcrAnalytics /></RequireAuth>} />
+      <Route path="/admin/clients" component={() => <RequireAuth><AdminClients /></RequireAuth>} />
+      <Route path="/review/:jobId/:pageId" component={() => <RequireAuth><PageReview /></RequireAuth>} />
       <Route path="/404" component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

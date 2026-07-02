@@ -49,13 +49,19 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      const { error: signUpError } = await supabaseBrowser.auth.signUp({
+      const { data, error: signUpError } = await supabaseBrowser.auth.signUp({
         email,
         password,
       });
 
       if (signUpError) {
-        setError(signUpError.message);
+        setError(signUpError.message || JSON.stringify(signUpError));
+        console.error("Signup error:", signUpError);
+        return;
+      }
+
+      if (!data.user) {
+        setError("Registration failed: No user created");
         return;
       }
 
@@ -63,9 +69,9 @@ export default function Auth() {
       setEmail("");
       setPassword("");
       setTimeout(() => setMode("login"), 2000);
-    } catch (err) {
-      setError("An unexpected error occurred");
-      console.error(err);
+    } catch (err: any) {
+      setError(err?.message || JSON.stringify(err) || "An unexpected error occurred");
+      console.error("Signup exception:", err);
     } finally {
       setLoading(false);
     }
