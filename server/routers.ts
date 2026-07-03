@@ -132,8 +132,12 @@ export const appRouter = router({
     transcribe: protectedProcedure
       .input(z.object({ pageId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => {
-        // Fetch page to get storage path and job ID
-        const { data: pageData } = await supabase
+        console.log("[Transcribe] Starting transcription for page:", input.pageId);
+        
+        try {
+          // Fetch page to get storage path and job ID
+          console.log("[Transcribe] Fetching page data...");
+          const { data: pageData } = await supabase
           .from("pages")
           .select("id, job_id, storage_path, page_order, page_label")
           .eq("id", input.pageId)
@@ -163,7 +167,7 @@ export const appRouter = router({
         let ocrResult: { regions: any[] };
 
         const transkribusConfigured =
-          process.env.TRANSKRIBUS_EMAIL &&
+          (process.env.TRANSKRIBUS_EMAIL || process.env.TRANSKRIBUS_USER) &&
           process.env.TRANSKRIBUS_PASSWORD &&
           process.env.TRANSKRIBUS_MODEL_ID;
 
@@ -298,6 +302,11 @@ If no corrections are needed, return { "corrections": [] }`,
             0
           ),
         };
+        } catch (err: any) {
+          console.error("[Transcribe] Error during transcription:", err.message);
+          console.error("[Transcribe] Error stack:", err.stack);
+          throw err;
+        }
       }),
 
     /**
@@ -477,6 +486,7 @@ async function runLlmFallback(
   const learningPrompt = await buildLearningPrompt(userId, jobId);
 
   const llmResponse = await invokeLLM({
+    max_tokens: 8000,
     messages: [
       { role: "system", content: learningPrompt },
       {
@@ -542,12 +552,56 @@ async function runLlmFallback(
       ? llmResponse.choices[0].message.content
       : JSON.stringify(llmResponse.choices[0].message.content);
 
+  console.log("[LLM] Response text length:", responseText.length);
+  console.log("[LLM] Response text (first 300 chars):", responseText.substring(0, 300));
+  console.log("[LLM] Response text (last 300 chars):", responseText.substring(Math.max(0, responseText.length - 300)));
+
   try {
-    return JSON.parse(responseText);
-  } catch {
+    const parsed = JSON.parse(responseText);
+    console.log("[LLM] Successfully parsed OCR response with", parsed.regions?.length ?? 0, "regions");
+    return parsed;
+  } catch (err: any) {
+    console.error("[LLM] JSON parse failed");
+    console.error("[LLM] Error name:", err.name);
+    console.error("[LLM] Error message:", err.message);
+    console.error("[LLM] Error stack:", err.stack);
+    
+    const match = err.message.match(/position (\d+)/);
+    const errorPos = match ? parseInt(match[1], 10) : responseText.length;
+    console.error("[LLM] Error at position:", errorPos, "out of", responseText.length);
+    console.error("[LLM] Response text (chars 100 before to 100 after error):", responseText.substring(Math.max(0, errorPos - 100), errorPos + 100));
+    
+    // If the response is incomplete (error at the end), try to fix it
+    if (errorPos >= responseText.length - 10) {
+      console.warn("[LLM] Response appears to be truncated at position", errorPos, ". Attempting to fix...");
+      try {
+        // Try to close any open structures
+        let fixedText = responseText;
+        // Count open/close braces and brackets
+        const openBraces = (fixedText.match(/{/g) || []).length;
+        const closeBraces = (fixedText.match(/}/g) || []).length;
+        const openBrackets = (fixedText.match(/\[/g) || []).length;
+        const closeBrackets = (fixedText.match(/]/g) || []).length;
+        
+        console.log("[LLM] Brace balance: open=", openBraces, "close=", closeBraces, "brackets: open=", openBrackets, "close=", closeBrackets);
+        
+        // Add missing closing brackets/braces
+        for (let i = 0; i < openBrackets - closeBrackets; i++) fixedText += "]";
+        for (let i = 0; i < openBraces - closeBraces; i++) fixedText += "}";
+        
+        const parsed = JSON.parse(fixedText);
+        console.log("[LLM] Successfully recovered truncated response with", parsed.regions?.length ?? 0, "regions");
+        return parsed;
+      } catch (fixErr: any) {
+        console.error("[LLM] Failed to recover truncated response:", fixErr.message);
+      }
+    }
+    
+    const errorMsg = `Failed to parse LLM transcription response: ${err.message}`;
+    console.error("[LLM] Throwing error:", errorMsg);
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
-      message: "Failed to parse LLM transcription response",
+      message: errorMsg,
     });
   }
 }

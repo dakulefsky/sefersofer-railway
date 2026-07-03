@@ -36,12 +36,12 @@ async function getAccessToken(): Promise<string> {
     return cachedToken;
   }
 
-  const email = process.env.TRANSKRIBUS_EMAIL;
+  const email = process.env.TRANSKRIBUS_EMAIL || process.env.TRANSKRIBUS_USER;
   const password = process.env.TRANSKRIBUS_PASSWORD;
 
   if (!email || !password) {
     throw new Error(
-      "Missing TRANSKRIBUS_EMAIL or TRANSKRIBUS_PASSWORD environment variables. " +
+      "Missing TRANSKRIBUS_EMAIL/TRANSKRIBUS_USER or TRANSKRIBUS_PASSWORD environment variables. " +
       "Sign up at transkribus.org and add your credentials to .env"
     );
   }
