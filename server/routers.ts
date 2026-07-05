@@ -485,124 +485,151 @@ async function runLlmFallback(
 ): Promise<{ regions: any[] }> {
   const learningPrompt = await buildLearningPrompt(userId, jobId);
 
-  const llmResponse = await invokeLLM({
-    max_tokens: 8000,
-    messages: [
-      { role: "system", content: learningPrompt },
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: 'Transcribe this handwritten Hebrew Torah study page. Return a JSON object with a "regions" array. Each region has "regionType" (main, margin_right, margin_left, margin_top, margin_bottom, interlinear), optional "anchorWordIndex" for interlinear, and "words" array with objects containing: wordIndex (number), text (string), confidence (0-1), isFlagged (boolean), isScribble (boolean), isInsertion (boolean). Read right-to-left. Preserve exact spelling including abbreviations like רמב"ם, רש"י, תוס\'.',
-          },
-          {
-            type: "image_url",
-            image_url: { url: imageUrl, detail: "high" },
-          },
-        ],
-      },
-    ],
-    responseFormat: {
-      type: "json_schema",
-      json_schema: {
-        name: "ocr_result",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            regions: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  regionType: {
-                    type: "string",
-                    enum: ["main", "margin_right", "margin_left", "margin_top", "margin_bottom", "interlinear"],
-                  },
-                  anchorWordIndex: { type: "number" },
-                  words: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        wordIndex: { type: "number" },
-                        text: { type: "string" },
-                        confidence: { type: "number" },
-                        isFlagged: { type: "boolean" },
-                        isScribble: { type: "boolean" },
-                        isInsertion: { type: "boolean" },
-                      },
-                      required: ["wordIndex", "text", "confidence", "isFlagged", "isScribble", "isInsertion"],
-                    },
-                  },
-                },
-                required: ["regionType", "words"],
-              },
-            },
-          },
-          required: ["regions"],
-        },
-      },
-    },
-  });
-
-  const responseText =
-    typeof llmResponse.choices[0].message.content === "string"
-      ? llmResponse.choices[0].message.content
-      : JSON.stringify(llmResponse.choices[0].message.content);
-
-  console.log("[LLM] Response text length:", responseText.length);
-  console.log("[LLM] Response text (first 300 chars):", responseText.substring(0, 300));
-  console.log("[LLM] Response text (last 300 chars):", responseText.substring(Math.max(0, responseText.length - 300)));
-
-  try {
-    const parsed = JSON.parse(responseText);
-    console.log("[LLM] Successfully parsed OCR response with", parsed.regions?.length ?? 0, "regions");
-    return parsed;
-  } catch (err: any) {
-    console.error("[LLM] JSON parse failed");
-    console.error("[LLM] Error name:", err.name);
-    console.error("[LLM] Error message:", err.message);
-    console.error("[LLM] Error stack:", err.stack);
+  // Helper: Detect glitches like uniform confidence scores
+  function detectGlitch(result: any): string | null {
+    const allWords = result.regions?.flatMap((r: any) => r.words ?? []) ?? [];
+    if (allWords.length === 0) return "No words extracted";
     
-    const match = err.message.match(/position (\d+)/);
-    const errorPos = match ? parseInt(match[1], 10) : responseText.length;
-    console.error("[LLM] Error at position:", errorPos, "out of", responseText.length);
-    console.error("[LLM] Response text (chars 100 before to 100 after error):", responseText.substring(Math.max(0, errorPos - 100), errorPos + 100));
+    const confidences = allWords.map((w: any) => w.confidence);
+    const uniqueConfidences = new Set(confidences);
     
-    // If the response is incomplete (error at the end), try to fix it
-    if (errorPos >= responseText.length - 10) {
-      console.warn("[LLM] Response appears to be truncated at position", errorPos, ". Attempting to fix...");
-      try {
-        // Try to close any open structures
-        let fixedText = responseText;
-        // Count open/close braces and brackets
-        const openBraces = (fixedText.match(/{/g) || []).length;
-        const closeBraces = (fixedText.match(/}/g) || []).length;
-        const openBrackets = (fixedText.match(/\[/g) || []).length;
-        const closeBrackets = (fixedText.match(/]/g) || []).length;
-        
-        console.log("[LLM] Brace balance: open=", openBraces, "close=", closeBraces, "brackets: open=", openBrackets, "close=", closeBrackets);
-        
-        // Add missing closing brackets/braces
-        for (let i = 0; i < openBrackets - closeBrackets; i++) fixedText += "]";
-        for (let i = 0; i < openBraces - closeBraces; i++) fixedText += "}";
-        
-        const parsed = JSON.parse(fixedText);
-        console.log("[LLM] Successfully recovered truncated response with", parsed.regions?.length ?? 0, "regions");
-        return parsed;
-      } catch (fixErr: any) {
-        console.error("[LLM] Failed to recover truncated response:", fixErr.message);
-      }
+    // If all confidence scores are identical, it's a glitch
+    if (uniqueConfidences.size === 1) {
+      return `All ${allWords.length} words have identical confidence (${confidences[0]}) - glitch detected`;
     }
     
-    const errorMsg = `Failed to parse LLM transcription response: ${err.message}`;
-    console.error("[LLM] Throwing error:", errorMsg);
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: errorMsg,
+    // If 80%+ of words have the same confidence, it's likely a glitch
+    const confidenceHistogram = new Map<string, number>();
+    confidences.forEach((c: number) => {
+      const key = c.toFixed(2);
+      confidenceHistogram.set(key, (confidenceHistogram.get(key) ?? 0) + 1);
     });
+    
+    const values = Array.from(confidenceHistogram.values()); const maxCount = Math.max(...values);
+    if (maxCount / allWords.length > 0.75) {
+      const topConfidence = Array.from(confidenceHistogram.entries()).sort((a, b) => b[1] - a[1])[0];
+      return `${maxCount}/${allWords.length} words have confidence ${topConfidence[0]} - likely glitch`;
+    }
+    
+    return null; // No glitch detected
   }
+
+  // Retry logic with different prompts
+  let attempt = 0;
+  const maxAttempts = 2;
+  let lastError: any = null;
+
+  while (attempt < maxAttempts) {
+    attempt++;
+    console.log(`[LLM] Transcription attempt ${attempt}/${maxAttempts}`);
+
+    try {
+      const systemPrompt = attempt === 1 
+        ? `${learningPrompt}\n\nCRITICAL: Only transcribe words you can CLEARLY see. DO NOT guess or hallucinate. If unclear, mark isFlagged=true with low confidence (0.3-0.5).`
+        : `${learningPrompt}\n\nCRITICAL RETRY: Previous response had hallucination. ONLY transcribe words you are absolutely certain about. Skip unclear words. Vary confidence (0.3-0.95). Mark unclear with isFlagged=true.`;
+
+      const userPrompt = attempt === 1
+        ? `Transcribe this handwritten Hebrew Torah study page. Read right-to-left. Return ONLY valid JSON with no extra text. For each word, provide realistic confidence scores (0.3-0.95, varied). Mark unclear handwriting with isFlagged=true.`
+        : `Second attempt: Be VERY conservative. Skip unclear words. Provide varied confidence scores (not all the same). Mark ambiguous words as isFlagged=true.`;
+
+      const llmResponse = await invokeLLM({
+        max_tokens: attempt === 1 ? 4000 : 3000,
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userPrompt },
+              { type: "image_url", image_url: { url: imageUrl, detail: "high" } },
+            ],
+          },
+        ],
+        responseFormat: {
+          type: "json_schema",
+          json_schema: {
+            name: "ocr_result",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                regions: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      regionType: {
+                        type: "string",
+                        enum: ["main", "margin_right", "margin_left", "margin_top", "margin_bottom", "interlinear"],
+                      },
+                      anchorWordIndex: { type: "number" },
+                      words: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            wordIndex: { type: "number" },
+                            text: { type: "string" },
+                            confidence: { type: "number" },
+                            isFlagged: { type: "boolean" },
+                            isScribble: { type: "boolean" },
+                            isInsertion: { type: "boolean" },
+                          },
+                          required: ["wordIndex", "text", "confidence", "isFlagged", "isScribble", "isInsertion"],
+                        },
+                      },
+                    },
+                    required: ["regionType", "words"],
+                  },
+                },
+              },
+              required: ["regions"],
+            },
+          },
+        },
+      });
+
+      const responseText =
+        typeof llmResponse.choices[0].message.content === "string"
+          ? llmResponse.choices[0].message.content
+          : JSON.stringify(llmResponse.choices[0].message.content);
+
+      console.log(`[LLM] Attempt ${attempt}: Response length:`, responseText.length);
+
+      let parsed = JSON.parse(responseText);
+      
+      // Check for glitches
+      const glitchMsg = detectGlitch(parsed);
+      if (glitchMsg) {
+        console.warn(`[LLM] Glitch detected on attempt ${attempt}:`, glitchMsg);
+        if (attempt < maxAttempts) {
+          console.log(`[LLM] Retrying with different parameters...`);
+          lastError = glitchMsg;
+          continue; // Retry
+        } else {
+          console.error(`[LLM] Glitch detected but no more retries available`);
+          // Return the result anyway, but log the issue
+        }
+      }
+
+      console.log(`[LLM] Successfully parsed OCR response with ${parsed.regions?.length ?? 0} regions`);
+      return parsed;
+    } catch (err: any) {
+      console.error(`[LLM] Attempt ${attempt} failed:`, err.message);
+      lastError = err;
+      
+      if (attempt < maxAttempts) {
+        console.log(`[LLM] Retrying...`);
+        continue;
+      }
+    }
+  }
+
+  // All attempts failed
+  const errorMsg = `Failed to parse LLM transcription response after ${maxAttempts} attempts: ${lastError?.message || 'Unknown error'}`;
+  console.error("[LLM] Throwing error:", errorMsg);
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: errorMsg,
+  });
 }
 
