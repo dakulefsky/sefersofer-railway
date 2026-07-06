@@ -485,36 +485,6 @@ async function runLlmFallback(
 ): Promise<{ regions: any[] }> {
   const learningPrompt = await buildLearningPrompt(userId, jobId);
 
-  // Helper: Detect glitches like uniform confidence scores
-  function detectGlitch(result: any): string | null {
-    const allWords = result.regions?.flatMap((r: any) => r.words ?? []) ?? [];
-    if (allWords.length === 0) return "No words extracted";
-    
-    const confidences = allWords.map((w: any) => w.confidence);
-    const uniqueConfidences = new Set(confidences);
-    
-    // If all confidence scores are identical, it's a glitch
-    if (uniqueConfidences.size === 1) {
-      return `All ${allWords.length} words have identical confidence (${confidences[0]}) - glitch detected`;
-    }
-    
-    // If 80%+ of words have the same confidence, it's likely a glitch
-    const confidenceHistogram = new Map<string, number>();
-    confidences.forEach((c: number) => {
-      const key = c.toFixed(2);
-      confidenceHistogram.set(key, (confidenceHistogram.get(key) ?? 0) + 1);
-    });
-    
-    const values = Array.from(confidenceHistogram.values()); const maxCount = Math.max(...values);
-    if (maxCount / allWords.length > 0.75) {
-      const topConfidence = Array.from(confidenceHistogram.entries()).sort((a, b) => b[1] - a[1])[0];
-      return `${maxCount}/${allWords.length} words have confidence ${topConfidence[0]} - likely glitch`;
-    }
-    
-    return null; // No glitch detected
-  }
-
-  // Retry logic with different prompts
   let attempt = 0;
   const maxAttempts = 2;
   let lastError: any = null;
@@ -524,68 +494,33 @@ async function runLlmFallback(
     console.log(`[LLM] Transcription attempt ${attempt}/${maxAttempts}`);
 
     try {
-      const systemPrompt = attempt === 1 
-        ? `${learningPrompt}\n\nCRITICAL: Only transcribe words you can CLEARLY see. DO NOT guess or hallucinate. If unclear, mark isFlagged=true with low confidence (0.3-0.5).`
-        : `${learningPrompt}\n\nCRITICAL RETRY: Previous response had hallucination. ONLY transcribe words you are absolutely certain about. Skip unclear words. Vary confidence (0.3-0.95). Mark unclear with isFlagged=true.`;
+      const textPrompt = attempt === 1
+        ? `Transcribe this handwritten Hebrew page. Output format: ONE WORD PER LINE. Each line: WORD|CONFIDENCE|FLAGGED
+Example:
+שלום|0.95|false
+עברית|0.85|false
+?|0.3|true
 
-      const userPrompt = attempt === 1
-        ? `Transcribe this handwritten Hebrew Torah study page. Read right-to-left. Return ONLY valid JSON with no extra text. For each word, provide realistic confidence scores (0.3-0.95, varied). Mark unclear handwriting with isFlagged=true.`
-        : `Second attempt: Be VERY conservative. Skip unclear words. Provide varied confidence scores (not all the same). Mark ambiguous words as isFlagged=true.`;
+Rules:
+- Read right-to-left
+- Confidence: 0.3-0.95 (varied, not all same)
+- Flagged: true if unclear or illegible
+- Output ONLY the word list, no JSON, no explanation, no extra text`
+        : `SECOND ATTEMPT - Be VERY conservative. Output format: WORD|CONFIDENCE|FLAGGED
+Skip words you cannot read clearly. Vary confidence scores. Output ONLY the word list.`;
 
       const llmResponse = await invokeLLM({
-        max_tokens: attempt === 1 ? 4000 : 3000,
+        max_tokens: attempt === 1 ? 2000 : 1500,
         messages: [
-          { role: "system", content: systemPrompt },
+          { role: "system", content: "You are a Hebrew manuscript OCR specialist. Output ONLY the transcribed words in the specified format. No JSON, no explanations, no extra text." },
           {
             role: "user",
             content: [
-              { type: "text", text: userPrompt },
+              { type: "text", text: textPrompt },
               { type: "image_url", image_url: { url: imageUrl, detail: "high" } },
             ],
           },
         ],
-        responseFormat: {
-          type: "json_schema",
-          json_schema: {
-            name: "ocr_result",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                regions: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      regionType: {
-                        type: "string",
-                        enum: ["main", "margin_right", "margin_left", "margin_top", "margin_bottom", "interlinear"],
-                      },
-                      anchorWordIndex: { type: "number" },
-                      words: {
-                        type: "array",
-                        items: {
-                          type: "object",
-                          properties: {
-                            wordIndex: { type: "number" },
-                            text: { type: "string" },
-                            confidence: { type: "number" },
-                            isFlagged: { type: "boolean" },
-                            isScribble: { type: "boolean" },
-                            isInsertion: { type: "boolean" },
-                          },
-                          required: ["wordIndex", "text", "confidence", "isFlagged", "isScribble", "isInsertion"],
-                        },
-                      },
-                    },
-                    required: ["regionType", "words"],
-                  },
-                },
-              },
-              required: ["regions"],
-            },
-          },
-        },
       });
 
       const responseText =
@@ -595,23 +530,58 @@ async function runLlmFallback(
 
       console.log(`[LLM] Attempt ${attempt}: Response length:`, responseText.length);
 
-      let parsed = JSON.parse(responseText);
+      // Parse the text-based format
+      const lines = responseText.split('\n').filter(l => l.trim() && !l.startsWith('Example') && !l.includes('Rules:'));
+      const words: any[] = [];
       
-      // Check for glitches
-      const glitchMsg = detectGlitch(parsed);
-      if (glitchMsg) {
-        console.warn(`[LLM] Glitch detected on attempt ${attempt}:`, glitchMsg);
-        if (attempt < maxAttempts) {
-          console.log(`[LLM] Retrying with different parameters...`);
-          lastError = glitchMsg;
-          continue; // Retry
-        } else {
-          console.error(`[LLM] Glitch detected but no more retries available`);
-          // Return the result anyway, but log the issue
+      for (const line of lines) {
+        const parts = line.split('|');
+        if (parts.length >= 3) {
+          const text = parts[0].trim();
+          const confidence = parseFloat(parts[1].trim()) || 0.5;
+          const isFlagged = parts[2].trim().toLowerCase() === 'true';
+          
+          if (text && !isNaN(confidence)) {
+            words.push({
+              wordIndex: words.length,
+              text,
+              confidence: Math.min(Math.max(confidence, 0.3), 0.95),
+              isFlagged,
+              isScribble: false,
+              isInsertion: false,
+            });
+          }
         }
       }
 
-      console.log(`[LLM] Successfully parsed OCR response with ${parsed.regions?.length ?? 0} regions`);
+      if (words.length === 0) {
+        throw new Error('No words extracted from LLM response');
+      }
+
+      // Check for glitches (uniform confidence)
+      const confidences = words.map(w => w.confidence);
+      const uniqueConfidences = new Set(confidences);
+      
+      if (uniqueConfidences.size === 1) {
+        console.warn(`[LLM] Glitch detected: All ${words.length} words have identical confidence (${confidences[0]})`);
+        if (attempt < maxAttempts) {
+          console.log(`[LLM] Retrying...`);
+          lastError = `All words have identical confidence (${confidences[0]})`;
+          continue;
+        }
+      }
+
+      // Build the regions structure
+      const parsed = {
+        regions: [
+          {
+            regionType: "main",
+            words,
+          },
+        ],
+      };
+
+      console.log(`[LLM] Successfully parsed OCR response with ${words.length} words`);
       return parsed;
     } catch (err: any) {
       console.error(`[LLM] Attempt ${attempt} failed:`, err.message);
@@ -632,4 +602,5 @@ async function runLlmFallback(
     message: errorMsg,
   });
 }
+
 

@@ -111,25 +111,61 @@ async function uploadImageToCollection(
 
   const imageBuffer = await imageResponse.arrayBuffer();
 
-  // Create FormData for multipart upload
-  const formData = new FormData();
-  formData.append("file", new Blob([imageBuffer]), fileName);
+  // Create multipart/form-data with proper boundary
+  const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substr(2, 16);
+  
+  // Build multipart body manually
+  const parts: (Uint8Array | string)[] = [];
+  
+  // Add boundary and file field
+  parts.push(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: image/jpeg\r\n\r\n`);
+  parts.push(new Uint8Array(imageBuffer));
+  parts.push(`\r\n--${boundary}--\r\n`);
+  
+  // Convert to Uint8Array
+  const encoder = new TextEncoder();
+  const totalLength = parts.reduce((sum, part) => {
+    if (typeof part === 'string') {
+      return sum + encoder.encode(part).length;
+    } else {
+      return sum + part.length;
+    }
+  }, 0);
+  
+  const multipartBody = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    if (typeof part === 'string') {
+      const bytes = encoder.encode(part);
+      multipartBody.set(bytes, offset);
+      offset += bytes.length;
+    } else {
+      multipartBody.set(part, offset);
+      offset += part.length;
+    }
+  }
+
+  console.log("[Transkribus] Sending multipart upload with boundary:", boundary);
 
   const response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData as any,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body: multipartBody,
   });
 
   if (!response.ok) {
     const text = await response.text();
-    console.error("[Transkribus] Upload failed:", response.status);
-    throw new Error(`Upload failed: ${response.status}`);
+    console.error("[Transkribus] Upload failed:", response.status, text);
+    throw new Error(`Upload failed: ${response.status}. Response: ${text}`);
   }
 
   const data = (await response.json()) as any;
   return data.docId || data.id;
 }
+
 
 // ─── Run HTR on a document page ────────────────────────────────────────────
 
