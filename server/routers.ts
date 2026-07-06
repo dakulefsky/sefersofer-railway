@@ -171,26 +171,23 @@ export const appRouter = router({
           process.env.TRANSKRIBUS_PASSWORD &&
           process.env.TRANSKRIBUS_MODEL_ID;
 
-        if (transkribusConfigured) {
-          try {
-            // Transkribus needs a publicly accessible URL — use the signed URL
-            const parsed = await transcribeAndParse(signedUrlData.signedUrl);
-            ocrResult = parsed;
-          } catch (err: any) {
-            console.error("[Transkribus] HTR failed, falling back to LLM:", err.message);
-            ocrResult = await runLlmFallback(
-              signedUrlData.signedUrl,
-              ctx.user!.id,
-              pageData.job_id
-            );
-          }
-        } else {
-          // Transkribus not yet configured — use LLM until credentials are added
-          ocrResult = await runLlmFallback(
-            signedUrlData.signedUrl,
-            ctx.user!.id,
-            pageData.job_id
-          );
+        if (!transkribusConfigured) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Transkribus not configured. Please set TRANSKRIBUS_EMAIL, TRANSKRIBUS_PASSWORD, and TRANSKRIBUS_MODEL_ID environment variables.",
+          });
+        }
+
+        try {
+          // Transkribus needs a publicly accessible URL — use the signed URL
+          const parsed = await transcribeAndParse(signedUrlData.signedUrl);
+          ocrResult = parsed;
+        } catch (err: any) {
+          console.error("[Transkribus] HTR failed:", err.message);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Transkribus OCR failed: ${err.message}`,
+          });
         }
 
         // ── LAYER 2: AI context correction ───────────────────────────────

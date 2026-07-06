@@ -19,6 +19,7 @@ function Router() {
       <Route path="/" component={() => <RequireAuth><Home /></RequireAuth>} />
       <Route path="/new" component={() => <RequireAuth><NewTranscription /></RequireAuth>} />
       <Route path="/analytics" component={() => <RequireAuth><OcrAnalytics /></RequireAuth>} />
+      <Route path="/admin" component={() => <RequireAuth><AdminClients /></RequireAuth>} />
       <Route path="/admin/clients" component={() => <RequireAuth><AdminClients /></RequireAuth>} />
       <Route path="/review/:jobId/:pageId" component={() => <RequireAuth><PageReview /></RequireAuth>} />
       <Route path="/404" component={NotFound} />

@@ -110,51 +110,39 @@ async function uploadImageToCollection(
   }
 
   const imageBuffer = await imageResponse.arrayBuffer();
+  const mimeType = imageResponse.headers.get('content-type') ?? 'application/octet-stream';
 
-  // Create multipart/form-data with proper boundary
-  const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substr(2, 16);
+  // Use built-in FormData - let fetch handle multipart framing
+  const formData = new FormData();
+  const blob = new Blob([imageBuffer], { type: mimeType });
   
-  // Build multipart body manually
-  const parts: (Uint8Array | string)[] = [];
-  
-  // Add boundary and file field
-  parts.push(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: image/jpeg\r\n\r\n`);
-  parts.push(new Uint8Array(imageBuffer));
-  parts.push(`\r\n--${boundary}--\r\n`);
-  
-  // Convert to Uint8Array
-  const encoder = new TextEncoder();
-  const totalLength = parts.reduce((sum, part) => {
-    if (typeof part === 'string') {
-      return sum + encoder.encode(part).length;
-    } else {
-      return sum + part.length;
-    }
-  }, 0);
-  
-  const multipartBody = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const part of parts) {
-    if (typeof part === 'string') {
-      const bytes = encoder.encode(part);
-      multipartBody.set(bytes, offset);
-      offset += bytes.length;
-    } else {
-      multipartBody.set(part, offset);
-      offset += part.length;
-    }
-  }
+  // Try 'file' field with fileName parameter
+  formData.append('file', blob, fileName);
+  formData.append('fileName', fileName);
 
-  console.log("[Transkribus] Sending multipart upload with boundary:", boundary);
+  console.log("[Transkribus] Uploading with field name 'file' and fileName param, mime type:", mimeType);
 
-  const response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload`, {
+  let response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
     },
-    body: multipartBody,
+    body: formData,
   });
+
+  // If 415, try with 'files' field instead
+  if (response.status === 415) {
+    console.log("[Transkribus] Got 415 with 'file' field, retrying with 'files'...");
+    const formData2 = new FormData();
+    formData2.append('files', blob, fileName);
+    response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData2,
+    });
+  }
 
   if (!response.ok) {
     const text = await response.text();
