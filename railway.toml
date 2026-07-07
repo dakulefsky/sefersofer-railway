@@ -1,0 +1,11 @@
+[build]
+builder = "nixpacks"
+
+[build.nixpacks]
+# Use Node 22 LTS
+nixpacks-metadata = '{"nodejs": "22"}'
+
+[deploy]
+startCommand = "npm run build && npm run start"
+healthcheckPath = "/"
+healthcheckTimeout = 30
