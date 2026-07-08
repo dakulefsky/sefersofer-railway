@@ -116,31 +116,29 @@ export default function NewTranscription() {
         filename: selectedFile.name,
       });
 
-      // Step 2: Upload image to Supabase Storage using the signed URL
-      // The signed URL already contains the token, so we just need to PUT the file
-      const response = await fetch(uploadUrlResult.signedUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": selectedFile.type || "application/octet-stream",
-        },
-        body: selectedFile,
-      });
+      // Step 2: Upload image using Supabase Browser Client (Fixed for Content-Type)
+      const { error: uploadError } = await supabaseBrowser.storage
+        .from("manuscripts")
+        .uploadToSignedUrl(
+          uploadUrlResult.path,
+          uploadUrlResult.token,
+          selectedFile,
+          {
+            contentType: selectedFile.type || "image/jpeg",
+            upsert: true
+          }
+        );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        showToast(`Upload failed: ${response.status} ${errorText}`, "error");
+      if (uploadError) {
+        showToast(`Upload failed: ${uploadError.message}`, "error");
         return;
       }
-
-      const uploadError = null;
-
-      // uploadError is now null (handled above), so we can continue
 
       // Step 3: Create page record
       const pageResult = await createPage.mutateAsync({
         jobId: selectedJobId,
         pageOrder: 1, // TODO: Calculate actual page order
-        storagePath: uploadUrlResult.storagePath,
+        storagePath: uploadUrlResult.path,
         pageLabel: pageLabel || undefined,
       });
 
