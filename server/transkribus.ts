@@ -94,6 +94,8 @@ async function getUserCollections(): Promise<any[]> {
 
 // ─── Upload image to collection ────────────────────────────────────────────
 
+// ─── Upload image to collection ────────────────────────────────────────────
+
 async function uploadImageToCollection(
   collectionId: string,
   imageUrl: string,
@@ -110,22 +112,25 @@ async function uploadImageToCollection(
   }
 
   const imageBuffer = await imageResponse.arrayBuffer();
-  const mimeType = imageResponse.headers.get('content-type') ?? 'application/octet-stream';
+  
+  // FORCE the mime type to jpeg so Transkribus doesn't panic
+  const mimeType = "image/jpeg";
 
   // Use built-in FormData - let fetch handle multipart framing
   const formData = new FormData();
   const blob = new Blob([imageBuffer], { type: mimeType });
   
-  // Try 'file' field with fileName parameter
+  // Appending the file (removed the extra 'fileName' field which can confuse strict APIs)
   formData.append('file', blob, fileName);
-  formData.append('fileName', fileName);
 
-  console.log("[Transkribus] Uploading with field name 'file' and fileName param, mime type:", mimeType);
+  console.log("[Transkribus] Uploading with field name 'file', mime type:", mimeType);
 
   let response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
+      // Note: We intentionally DO NOT set Content-Type here. 
+      // Node.js will automatically generate the correct 'multipart/form-data; boundary=...' header
     },
     body: formData,
   });
@@ -153,6 +158,7 @@ async function uploadImageToCollection(
   const data = (await response.json()) as any;
   return data.docId || data.id;
 }
+     
 
 
 // ─── Run HTR on a document page ────────────────────────────────────────────
