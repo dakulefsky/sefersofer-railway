@@ -34,7 +34,7 @@ export const pages = pgTable("pages", {
   jobId: varchar("job_id", { length: 64 }).notNull(),
   pageOrder: integer("page_order").notNull(),
   pageLabel: varchar("page_label", { length: 255 }),
-  imageUrl: text("image_url"),
+  storagePath: text("storage_path"),
   archived: booleanStringEnum("archived").default("false").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
