@@ -436,37 +436,60 @@ If no corrections are needed, return { "corrections": [] }`,
 
   // ─── OCR Analytics ─────────────────────────────────────────────────────────
 
+ // ─── OCR Analytics ─────────────────────────────────────────────────────────
+
   ocr: router({
     getAccuracyTrend: protectedProcedure.query(async ({ ctx }) => {
-      return getAccuracyTrend(ctx.user!.id);
+      try {
+        return await getAccuracyTrend(ctx.user!.id);
+      } catch (error) {
+        console.warn("Could not load accuracy trend (likely empty DB):", error);
+        return []; // Return empty data instead of crashing
+      }
     }),
 
     getLatestAccuracy: protectedProcedure.query(async ({ ctx }) => {
-      return getLatestAccuracy(ctx.user!.id);
+      try {
+        return await getLatestAccuracy(ctx.user!.id);
+      } catch (error) {
+        return 0; // Return 0% accuracy
+      }
     }),
 
     getTopLetterConfusions: protectedProcedure.query(async ({ ctx }) => {
-      return getTopLetterConfusions(ctx.user!.id);
+      try {
+        return await getTopLetterConfusions(ctx.user!.id);
+      } catch (error) {
+        return [];
+      }
     }),
 
     getTopMorphologies: protectedProcedure.query(async ({ ctx }) => {
-      return getTopMorphologies(ctx.user!.id);
+      try {
+        return await getTopMorphologies(ctx.user!.id);
+      } catch (error) {
+        return [];
+      }
     }),
 
     /**
      * Get the adaptive learning prompt based on user's correction history.
      * This is used to improve the next OCR transcription.
      */
+   
     getLearningPrompt: protectedProcedure
       .input(z.object({ jobId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
-        const prompt = await buildLearningPrompt(ctx.user!.id, input.jobId);
-        return { prompt };
+        try {
+          const prompt = await buildLearningPrompt(ctx.user!.id, input.jobId);
+          return { prompt };
+        } catch (error) {
+          return { prompt: "" }; // Return empty prompt if it fails
+        }
       }),
-
-
   }),
-});
+
+
 
 export type AppRouter = typeof appRouter;
 
