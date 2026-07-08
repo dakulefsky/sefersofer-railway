@@ -1,10 +1,10 @@
-import { integer, pgEnum, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { integer, pgEnum, pgTable, text, timestamp, varchar, uuid } from "drizzle-orm/pg-core";
 
 export const roleEnum = pgEnum("role", ["user", "admin", "gm", "employee"]);
 export const booleanStringEnum = pgEnum("boolean_string", ["true", "false"]);
 
 export const users = pgTable("users", {
-  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  id: uuid("id").primaryKey(),
   openId: varchar("open_id", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -19,7 +19,7 @@ export type InsertUser = typeof users.$inferInsert;
 
 export const jobs = pgTable("jobs", {
   id: varchar("id", { length: 64 }).primaryKey(),
-  userId: integer("user_id").notNull(),
+  userId: uuid("user_id").notNull(),
   name: text("name").notNull(),
   description: text("description"),
   archived: booleanStringEnum("archived").default("false").notNull(),
@@ -58,7 +58,7 @@ export type InsertWord = typeof words.$inferInsert;
 export const wordCorrections = pgTable("word_corrections", {
   id: varchar("id", { length: 64 }).primaryKey(),
   wordId: varchar("word_id", { length: 64 }).notNull(),
-  userId: integer("user_id").notNull(),
+  userId: uuid("user_id").notNull(),
   originalText: text("original_text").notNull(),
   correctedText: text("corrected_text").notNull(),
   isUserMarkedScribble: booleanStringEnum("is_user_marked_scribble").default("false").notNull(),
@@ -69,7 +69,7 @@ export type InsertWordCorrection = typeof wordCorrections.$inferInsert;
 
 export const letterConfusionPairs = pgTable("letter_confusion_pairs", {
   id: varchar("id", { length: 64 }).primaryKey(),
-  userId: integer("user_id").notNull(),
+  userId: uuid("user_id").notNull(),
   jobId: varchar("job_id", { length: 64 }).notNull(),
   originalLetter: varchar("original_letter", { length: 1 }).notNull(),
   correctedLetter: varchar("corrected_letter", { length: 1 }).notNull(),
@@ -82,7 +82,7 @@ export type InsertLetterConfusionPair = typeof letterConfusionPairs.$inferInsert
 
 export const letterMorphologyVariants = pgTable("letter_morphology_variants", {
   id: varchar("id", { length: 64 }).primaryKey(),
-  userId: integer("user_id").notNull(),
+  userId: uuid("user_id").notNull(),
   jobId: varchar("job_id", { length: 64 }).notNull(),
   letter: varchar("letter", { length: 1 }).notNull(),
   morphology: varchar("morphology", { length: 255 }).notNull(),
@@ -96,7 +96,7 @@ export type InsertLetterMorphologyVariant = typeof letterMorphologyVariants.$inf
 
 export const ocrAccuracyMetrics = pgTable("ocr_accuracy_metrics", {
   id: varchar("id", { length: 64 }).primaryKey(),
-  userId: integer("user_id").notNull(),
+  userId: uuid("user_id").notNull(),
   jobId: varchar("job_id", { length: 64 }).notNull(),
   pageId: varchar("page_id", { length: 64 }).notNull(),
   totalWords: integer("total_words").notNull(),
