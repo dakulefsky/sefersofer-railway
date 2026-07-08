@@ -1,51 +1,7 @@
 // server/transkribus.ts
-// Uses Transkribus V2 Processing API for handwritten Hebrew OCR.
-
-const AUTH_URL = "https://account.readcoop.eu/auth/realms/readcoop/protocol/openid-connect/token";
-const V2_API_BASE = "https://transkribus.eu/processing/v2/processes";
-
-// ─── Token management ────────────────────────────────────────────────────────
-
-let cachedToken: string | null = null;
-let tokenExpiresAt: number = 0;
-
-async function getAccessToken(): Promise<string> {
-  const now = Date.now();
-  if (cachedToken && now < tokenExpiresAt - 60_000) {
-    return cachedToken;
-  }
-
-  const email = process.env.TRANSKRIBUS_EMAIL || process.env.TRANSKRIBUS_USER;
-  const password = process.env.TRANSKRIBUS_PASSWORD;
-
-  if (!email || !password) {
-    throw new Error("Missing TRANSKRIBUS_EMAIL or TRANSKRIBUS_PASSWORD environment variables.");
-  }
-
-  const body = new URLSearchParams({
-    grant_type: "password",
-    username: email,
-    password: password,
-    client_id: "transkribus-api-client",
-  });
-
-  const response = await fetch(AUTH_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Transkribus auth failed: ${response.status}`);
-  }
-
-  const data = (await response.json()) as any;
-  cachedToken = data.access_token;
-  tokenExpiresAt = now + data.expires_in * 1000;
-  return cachedToken!;
-}
-
-// ─── Main transcription function (V2 API) ──────────────────────────────────
+// TEMPORARY MOCK: Transkribus's live endpoints (both Legacy and V2) are currently 
+// throwing 404s due to their active server migration. This mock allows frontend 
+// and database development to continue unblocked.
 
 export async function transcribeAndParse(imageUrl: string): Promise<{
   regions: {
@@ -59,117 +15,36 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
     }[];
   }[];
 }> {
-  const modelId = parseInt(process.env.TRANSKRIBUS_MODEL_ID || "371705", 10);
+  console.log("[Transkribus Mock] Bypassing broken external API...");
+  console.log("[Transkribus Mock] Pretending to process image URL:", imageUrl);
 
-  try {
-    const token = await getAccessToken();
-    console.log("[Transkribus] Starting V2 HTR job for model:", modelId);
+  // Simulate a 2-second network delay so your frontend loading state works
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    // Step 1: Submit image URL directly to V2 Processing API
-    const startResponse = await fetch(V2_API_BASE, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
+  console.log("[Transkribus Mock] Returning simulated OCR data.");
+
+  // Return realistic mocked data based on your database schema
+  return {
+    regions: [
+      {
+        regionType: "main",
+        words: [
+          { wordIndex: 0, text: "בְּרֵאשִׁ֖ית", confidence: 95, isFlagged: false, isScribble: false },
+          { wordIndex: 1, text: "בָּרָ֣א", confidence: 92, isFlagged: false, isScribble: false },
+          { wordIndex: 2, text: "אֱלֹהִ֑ים", confidence: 88, isFlagged: true, isScribble: false }, // Flagged for UI testing
+          { wordIndex: 3, text: "אֵ֥ת", confidence: 99, isFlagged: false, isScribble: false },
+          { wordIndex: 4, text: "הַשָּׁמַ֖יִם", confidence: 91, isFlagged: false, isScribble: false },
+          { wordIndex: 5, text: "וְאֵ֥ת", confidence: 97, isFlagged: false, isScribble: false },
+          { wordIndex: 6, text: "הָאָֽרֶץ", confidence: 85, isFlagged: false, isScribble: false },
+        ],
       },
-      body: JSON.stringify({
-        config: { modelId: modelId },
-        image: { imageUrl: imageUrl }
-      })
-    });
-
-    if (!startResponse.ok) {
-      const text = await startResponse.text();
-      throw new Error(`Failed to start job: ${startResponse.status} ${text}`);
-    }
-
-    const startData = (await startResponse.json()) as any;
-    const processId = startData.processId || startData.id;
-    console.log("[Transkribus] V2 Job started, ID:", processId);
-
-    // Step 2: Poll for completion
-    const maxWaitMs = 2 * 60 * 1000;
-    const deadline = Date.now() + maxWaitMs;
-    let isFinished = false;
-
-    while (Date.now() < deadline) {
-      const statusRes = await fetch(`${V2_API_BASE}/${processId}`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      
-      const statusData = (await statusRes.json()) as any;
-      console.log("[Transkribus] Job status:", statusData.status);
-
-      // The V2 API usually returns SUCCESS or FINISHED
-      if (statusData.status === "FINISHED" || statusData.status === "SUCCESS") {
-        isFinished = true;
-        break;
+      {
+        regionType: "margin_right",
+        words: [
+          { wordIndex: 7, text: "פירוש", confidence: 70, isFlagged: false, isScribble: false },
+          { wordIndex: 8, text: "[scribble]", confidence: 40, isFlagged: false, isScribble: true },
+        ],
       }
-      if (statusData.status === "FAILED" || statusData.status === "ERROR") {
-        throw new Error(`HTR job failed: ${JSON.stringify(statusData)}`);
-      }
-
-      await new Promise((r) => setTimeout(r, 2500));
-    }
-
-    if (!isFinished) throw new Error("Transkribus processing timed out after 2 minutes.");
-
-    // Step 3: Get PAGE XML result
-    console.log("[Transkribus] Job complete. Fetching PAGE XML...");
-    const xmlRes = await fetch(`${V2_API_BASE}/${processId}/page`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-
-    if (!xmlRes.ok) throw new Error(`Failed to fetch XML: ${xmlRes.status}`);
-    const xmlContent = await xmlRes.text();
-
-    // Step 4: Parse
-    return { regions: parsePageXml(xmlContent) };
-
-  } catch (err: any) {
-    console.error("[Transkribus] Error during transcription:", err.message);
-    throw err;
-  }
-}
-
-// ─── Parse PAGE XML format ────────────────────────────────────────────────
-
-function parsePageXml(xmlContent: string) {
-  const regions: any[] = [];
-  let wordIndex = 0;
-  
-  const regionRegex = /<TextRegion[^>]*>([\s\S]*?)<\/TextRegion>/g;
-  let regionMatch;
-
-  while ((regionMatch = regionRegex.exec(xmlContent)) !== null) {
-    const regionContent = regionMatch[1];
-    const words: any[] = [];
-    
-    const wordRegex = /<Word[^>]*>[\s\S]*?<Unicode>([^<]*)<\/Unicode>[\s\S]*?<\/Word>/g;
-    let wordMatch;
-
-    while ((wordMatch = wordRegex.exec(regionContent)) !== null) {
-      const wordText = wordMatch[1].trim();
-      if (wordText) {
-        words.push({
-          wordIndex: wordIndex++,
-          text: wordText,
-          confidence: 0.85, 
-          isFlagged: false,
-          isScribble: false,
-        });
-      }
-    }
-
-    if (words.length > 0) {
-      regions.push({ regionType: "main", words });
-    }
-  }
-
-  if (regions.length === 0) {
-    console.warn("[Transkribus] No text regions extracted from PAGE XML");
-    regions.push({ regionType: "main", words: [] });
-  }
-
-  return regions;
+    ],
+  };
 }
