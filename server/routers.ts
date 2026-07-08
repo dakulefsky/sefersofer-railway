@@ -488,7 +488,7 @@ If no corrections are needed, return { "corrections": [] }`,
         }
       }),
   }),
-
+});
 
 
 export type AppRouter = typeof appRouter;
