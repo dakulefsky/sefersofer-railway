@@ -18,7 +18,7 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 export const jobs = pgTable("jobs", {
-  id: varchar("id", { length: 64 }).primaryKey(),
+  id: varchar("id", { length: 64 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: uuid("user_id").notNull(),
   name: text("name").notNull(),
   description: text("description"),
@@ -30,7 +30,7 @@ export type Job = typeof jobs.$inferSelect;
 export type InsertJob = typeof jobs.$inferInsert;
 
 export const pages = pgTable("pages", {
-  id: varchar("id", { length: 64 }).primaryKey(),
+  id: varchar("id", { length: 64 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
   jobId: varchar("job_id", { length: 64 }).notNull(),
   pageOrder: integer("page_order").notNull(),
   pageLabel: varchar("page_label", { length: 255 }),
@@ -43,7 +43,7 @@ export type Page = typeof pages.$inferSelect;
 export type InsertPage = typeof pages.$inferInsert;
 
 export const words = pgTable("words", {
-  id: varchar("id", { length: 64 }).primaryKey(),
+  id: varchar("id", { length: 64 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
   pageId: varchar("page_id", { length: 64 }).notNull(),
   wordIndex: integer("word_index").notNull(),
   text: text("text").notNull(),
@@ -56,7 +56,7 @@ export type Word = typeof words.$inferSelect;
 export type InsertWord = typeof words.$inferInsert;
 
 export const wordCorrections = pgTable("word_corrections", {
-  id: varchar("id", { length: 64 }).primaryKey(),
+  id: varchar("id", { length: 64 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
   wordId: varchar("word_id", { length: 64 }).notNull(),
   userId: uuid("user_id").notNull(),
   originalText: text("original_text").notNull(),
@@ -68,7 +68,7 @@ export type WordCorrection = typeof wordCorrections.$inferSelect;
 export type InsertWordCorrection = typeof wordCorrections.$inferInsert;
 
 export const letterConfusionPairs = pgTable("letter_confusion_pairs", {
-  id: varchar("id", { length: 64 }).primaryKey(),
+  id: varchar("id", { length: 64 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: uuid("user_id").notNull(),
   jobId: varchar("job_id", { length: 64 }).notNull(),
   originalLetter: varchar("original_letter", { length: 1 }).notNull(),
@@ -81,7 +81,7 @@ export type LetterConfusionPair = typeof letterConfusionPairs.$inferSelect;
 export type InsertLetterConfusionPair = typeof letterConfusionPairs.$inferInsert;
 
 export const letterMorphologyVariants = pgTable("letter_morphology_variants", {
-  id: varchar("id", { length: 64 }).primaryKey(),
+  id: varchar("id", { length: 64 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: uuid("user_id").notNull(),
   jobId: varchar("job_id", { length: 64 }).notNull(),
   letter: varchar("letter", { length: 1 }).notNull(),
@@ -95,7 +95,7 @@ export type LetterMorphologyVariant = typeof letterMorphologyVariants.$inferSele
 export type InsertLetterMorphologyVariant = typeof letterMorphologyVariants.$inferInsert;
 
 export const ocrAccuracyMetrics = pgTable("ocr_accuracy_metrics", {
-  id: varchar("id", { length: 64 }).primaryKey(),
+  id: varchar("id", { length: 64 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: uuid("user_id").notNull(),
   jobId: varchar("job_id", { length: 64 }).notNull(),
   pageId: varchar("page_id", { length: 64 }).notNull(),
