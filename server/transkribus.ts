@@ -1,15 +1,8 @@
 // server/transkribus.ts
-// Uses Transkribus Legacy API for handwritten Hebrew OCR.
-//
-// SETUP:
-//   1. Sign up at transkribus.org
-//   2. Add to your .env:
-//        TRANSKRIBUS_USER=your@email.com
-//        TRANSKRIBUS_PASSWORD=yourpassword
-//        TRANSKRIBUS_MODEL_ID=371705
+// Uses Transkribus V2 Processing API for handwritten Hebrew OCR.
 
 const AUTH_URL = "https://account.readcoop.eu/auth/realms/readcoop/protocol/openid-connect/token";
-const LEGACY_API_BASE = "https://transkribus.eu/TrpServer/rest";
+const V2_API_BASE = "https://transkribus.eu/processing/v2/processes";
 
 // ─── Token management ────────────────────────────────────────────────────────
 
@@ -18,10 +11,7 @@ let tokenExpiresAt: number = 0;
 
 async function getAccessToken(): Promise<string> {
   const now = Date.now();
-
-  // Return cached token if still valid (with 60s buffer)
   if (cachedToken && now < tokenExpiresAt - 60_000) {
-    console.log("[Transkribus] Using cached token");
     return cachedToken;
   }
 
@@ -29,12 +19,8 @@ async function getAccessToken(): Promise<string> {
   const password = process.env.TRANSKRIBUS_PASSWORD;
 
   if (!email || !password) {
-    throw new Error(
-      "Missing TRANSKRIBUS_EMAIL/TRANSKRIBUS_USER or TRANSKRIBUS_PASSWORD environment variables."
-    );
+    throw new Error("Missing TRANSKRIBUS_EMAIL or TRANSKRIBUS_PASSWORD environment variables.");
   }
-
-  console.log("[Transkribus] Fetching new access token...");
 
   const body = new URLSearchParams({
     grant_type: "password",
@@ -50,166 +36,16 @@ async function getAccessToken(): Promise<string> {
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    console.error("[Transkribus] Auth failed:", response.status, text);
-    throw new Error(`Transkribus auth failed: ${response.status} — ${text}`);
+    throw new Error(`Transkribus auth failed: ${response.status}`);
   }
 
   const data = (await response.json()) as any;
   cachedToken = data.access_token;
   tokenExpiresAt = now + data.expires_in * 1000;
-
-  console.log("[Transkribus] Token obtained successfully, expires in:", data.expires_in, "seconds");
-
   return cachedToken!;
 }
 
-// ─── Get user collections ──────────────────────────────────────────────────
-
-async function getUserCollections(): Promise<any[]> {
-  const token = await getAccessToken();
-
-  console.log("[Transkribus] Fetching user collections...");
-
-  const response = await fetch(`${LEGACY_API_BASE}/collections`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    console.error("[Transkribus] Failed to get collections:", response.status);
-    throw new Error(`Failed to get collections: ${response.status}`);
-  }
-
-  const data = (await response.json()) as any;
-  console.log("[Transkribus] Collections API response (first 500 chars):", JSON.stringify(data).substring(0, 500));
-  console.log("[Transkribus] Response keys:", Object.keys(data));
-  
-  // Try different response formats
-  const collections = data.collections || data.colls || data.list || (Array.isArray(data) ? data : []);
-  console.log("[Transkribus] Found", Array.isArray(collections) ? collections.length : 0, "collections");
-  
-  return Array.isArray(collections) ? collections : [];
-}
-
-
-
-// ─── Upload image to collection ────────────────────────────────────────────
-
-async function uploadImageToCollection(
-  collectionId: string,
-  imageUrl: string,
-  fileName: string
-): Promise<string> {
-  const token = await getAccessToken();
-
-  console.log("[Transkribus] Uploading image to collection:", collectionId);
-
-  // Fetch the image from Supabase
-  const imageResponse = await fetch(imageUrl);
-  if (!imageResponse.ok) {
-    throw new Error(`Failed to fetch image: ${imageResponse.status}`);
-  }
-
-  // Get the raw binary bytes of the image
-  const imageBuffer = await imageResponse.arrayBuffer();
-
-  console.log("[Transkribus] Sending raw binary upload, size:", imageBuffer.byteLength);
-
-  // Send the raw binary buffer DIRECTLY. No FormData. No multipart.
-  // We pass the filename in the query string parameter, which the legacy API requires.
-  const response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload?fileName=${encodeURIComponent(fileName)}`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/octet-stream" // This is exactly what Transkribus demands
-    },
-    body: imageBuffer,
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    console.error("[Transkribus] Upload failed:", response.status, text);
-    throw new Error(`Upload failed: ${response.status}. Response: ${text}`);
-  }
-
-  const data = (await response.json()) as any;
-  return data.docId || data.id;
-}
-
-// ─── Run HTR on a document page ────────────────────────────────────────────
-
-async function runHTROnPage(
-  collectionId: string,
-  docId: string,
-  pageNr: number,
-  modelId: string
-): Promise<string> {
-  const token = await getAccessToken();
-
-  console.log(
-    "[Transkribus] Running HTR on page",
-    pageNr,
-    "with model",
-    modelId,
-    "in collection",
-    collectionId
-  );
-
-  const response = await fetch(
-    `${LEGACY_API_BASE}/collections/${collectionId}/${docId}/pages/${pageNr}/recognition/htr?modelId=${modelId}`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    }
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    console.error("[Transkribus] HTR request failed:", response.status, text);
-    throw new Error(`HTR request failed: ${response.status}`);
-  }
-
-  const data = (await response.json()) as any;
-  return data.jobId || data.id;
-}
-
-// ─── Poll job status ──────────────────────────────────────────────────────
-
-async function getJobStatus(jobId: string): Promise<any> {
-  const token = await getAccessToken();
-
-  const response = await fetch(`${LEGACY_API_BASE}/jobs/${jobId}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to get job status: ${response.status}`);
-  }
-
-  return await response.json();
-}
-
-// ─── Get page XML (transcription result) ────────────────────────────────────
-
-async function getPageXml(collectionId: string, docId: string, pageNr: number): Promise<string> {
-  const token = await getAccessToken();
-
-  const response = await fetch(
-    `${LEGACY_API_BASE}/collections/${collectionId}/${docId}/pages/${pageNr}/xml`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Failed to get page XML: ${response.status}`);
-  }
-
-  return await response.text();
-}
-
-// ─── Main transcription function ───────────────────────────────────────────
+// ─── Main transcription function (V2 API) ──────────────────────────────────
 
 export async function transcribeAndParse(imageUrl: string): Promise<{
   regions: {
@@ -223,51 +59,73 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
     }[];
   }[];
 }> {
-  const modelId = process.env.TRANSKRIBUS_MODEL_ID || "371705";
+  const modelId = parseInt(process.env.TRANSKRIBUS_MODEL_ID || "371705", 10);
 
   try {
-    // Step 1: Use hardcoded collection ID
-    const collectionId = "2449075";
-    console.log("[Transkribus] Using collection:", collectionId);
+    const token = await getAccessToken();
+    console.log("[Transkribus] Starting V2 HTR job for model:", modelId);
 
-    // Step 2: Upload image
-    const fileName = `temp_${Date.now()}.jpg`;
-    const docId = await uploadImageToCollection(collectionId, imageUrl, fileName);
-    console.log("[Transkribus] Document created:", docId);
+    // Step 1: Submit image URL directly to V2 Processing API
+    const startResponse = await fetch(V2_API_BASE, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        config: { modelId: modelId },
+        image: { imageUrl: imageUrl }
+      })
+    });
 
-    // Step 3: Run HTR
-    const jobId = await runHTROnPage(collectionId, docId, 1, modelId);
-    console.log("[Transkribus] HTR job started:", jobId);
-
-    // Step 4: Poll for completion (max 2 minutes)
-    const maxWaitMs = 2 * 60 * 1000;
-    const pollIntervalMs = 2000;
-    const deadline = Date.now() + maxWaitMs;
-
-    while (Date.now() < deadline) {
-      const jobStatus = await getJobStatus(jobId);
-      console.log("[Transkribus] Job status:", jobStatus.status);
-
-      if (jobStatus.status === "FINISHED") {
-        console.log("[Transkribus] HTR completed successfully");
-        break;
-      }
-
-      if (jobStatus.status === "FAILED") {
-        throw new Error(`HTR job failed: ${jobStatus.error}`);
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    if (!startResponse.ok) {
+      const text = await startResponse.text();
+      throw new Error(`Failed to start job: ${startResponse.status} ${text}`);
     }
 
-    // Step 5: Get the result XML
-    const xmlContent = await getPageXml(collectionId, docId, 1);
-    console.log("[Transkribus] Retrieved page XML, length:", xmlContent.length);
+    const startData = (await startResponse.json()) as any;
+    const processId = startData.processId || startData.id;
+    console.log("[Transkribus] V2 Job started, ID:", processId);
 
-    // Step 6: Parse PAGE XML to extract words
-    const regions = parsePageXml(xmlContent);
+    // Step 2: Poll for completion
+    const maxWaitMs = 2 * 60 * 1000;
+    const deadline = Date.now() + maxWaitMs;
+    let isFinished = false;
 
-    return { regions };
+    while (Date.now() < deadline) {
+      const statusRes = await fetch(`${V2_API_BASE}/${processId}`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      
+      const statusData = (await statusRes.json()) as any;
+      console.log("[Transkribus] Job status:", statusData.status);
+
+      // The V2 API usually returns SUCCESS or FINISHED
+      if (statusData.status === "FINISHED" || statusData.status === "SUCCESS") {
+        isFinished = true;
+        break;
+      }
+      if (statusData.status === "FAILED" || statusData.status === "ERROR") {
+        throw new Error(`HTR job failed: ${JSON.stringify(statusData)}`);
+      }
+
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+
+    if (!isFinished) throw new Error("Transkribus processing timed out after 2 minutes.");
+
+    // Step 3: Get PAGE XML result
+    console.log("[Transkribus] Job complete. Fetching PAGE XML...");
+    const xmlRes = await fetch(`${V2_API_BASE}/${processId}/page`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+
+    if (!xmlRes.ok) throw new Error(`Failed to fetch XML: ${xmlRes.status}`);
+    const xmlContent = await xmlRes.text();
+
+    // Step 4: Parse
+    return { regions: parsePageXml(xmlContent) };
+
   } catch (err: any) {
     console.error("[Transkribus] Error during transcription:", err.message);
     throw err;
@@ -276,31 +134,17 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
 
 // ─── Parse PAGE XML format ────────────────────────────────────────────────
 
-function parsePageXml(xmlContent: string): {
-  regionType: string;
-  words: {
-    wordIndex: number;
-    text: string;
-    confidence: number;
-    isFlagged: boolean;
-    isScribble: boolean;
-  }[];
-}[] {
-  // Simple XML parsing for PAGE format
-  // PAGE XML contains <TextRegion> elements with <TextLine> elements containing <Word> elements
-
+function parsePageXml(xmlContent: string) {
   const regions: any[] = [];
   let wordIndex = 0;
-
-  // Extract all text regions
+  
   const regionRegex = /<TextRegion[^>]*>([\s\S]*?)<\/TextRegion>/g;
   let regionMatch;
 
   while ((regionMatch = regionRegex.exec(xmlContent)) !== null) {
     const regionContent = regionMatch[1];
     const words: any[] = [];
-
-    // Extract words from this region
+    
     const wordRegex = /<Word[^>]*>[\s\S]*?<Unicode>([^<]*)<\/Unicode>[\s\S]*?<\/Word>/g;
     let wordMatch;
 
@@ -310,7 +154,7 @@ function parsePageXml(xmlContent: string): {
         words.push({
           wordIndex: wordIndex++,
           text: wordText,
-          confidence: 0.85, // Transkribus doesn't always provide confidence, use reasonable default
+          confidence: 0.85, 
           isFlagged: false,
           isScribble: false,
         });
@@ -318,20 +162,13 @@ function parsePageXml(xmlContent: string): {
     }
 
     if (words.length > 0) {
-      regions.push({
-        regionType: "main",
-        words,
-      });
+      regions.push({ regionType: "main", words });
     }
   }
 
-  // If no regions found, return empty
   if (regions.length === 0) {
     console.warn("[Transkribus] No text regions extracted from PAGE XML");
-    regions.push({
-      regionType: "main",
-      words: [],
-    });
+    regions.push({ regionType: "main", words: [] });
   }
 
   return regions;
