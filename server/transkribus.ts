@@ -92,7 +92,7 @@ async function getUserCollections(): Promise<any[]> {
   return Array.isArray(collections) ? collections : [];
 }
 
-// ─── Upload image to collection ────────────────────────────────────────────
+
 
 // ─── Upload image to collection ────────────────────────────────────────────
 
@@ -105,49 +105,27 @@ async function uploadImageToCollection(
 
   console.log("[Transkribus] Uploading image to collection:", collectionId);
 
-  // Fetch the image from the URL
+  // Fetch the image from Supabase
   const imageResponse = await fetch(imageUrl);
   if (!imageResponse.ok) {
     throw new Error(`Failed to fetch image: ${imageResponse.status}`);
   }
 
+  // Get the raw binary bytes of the image
   const imageBuffer = await imageResponse.arrayBuffer();
-  
-  // FORCE the mime type to jpeg so Transkribus doesn't panic
-  const mimeType = "image/jpeg";
 
-  // Use built-in FormData - let fetch handle multipart framing
-  const formData = new FormData();
-  const blob = new Blob([imageBuffer], { type: mimeType });
-  
-  // Appending the file (removed the extra 'fileName' field which can confuse strict APIs)
-  formData.append('file', blob, fileName);
+  console.log("[Transkribus] Sending raw binary upload, size:", imageBuffer.byteLength);
 
-  console.log("[Transkribus] Uploading with field name 'file', mime type:", mimeType);
-
-  let response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload`, {
+  // Send the raw binary buffer DIRECTLY. No FormData. No multipart.
+  // We pass the filename in the query string parameter, which the legacy API requires.
+  const response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload?fileName=${encodeURIComponent(fileName)}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
-      // Note: We intentionally DO NOT set Content-Type here. 
-      // Node.js will automatically generate the correct 'multipart/form-data; boundary=...' header
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/octet-stream" // This is exactly what Transkribus demands
     },
-    body: formData,
+    body: imageBuffer,
   });
-
-  // If 415, try with 'files' field instead
-  if (response.status === 415) {
-    console.log("[Transkribus] Got 415 with 'file' field, retrying with 'files'...");
-    const formData2 = new FormData();
-    formData2.append('files', blob, fileName);
-    response = await fetch(`${LEGACY_API_BASE}/collections/${collectionId}/upload`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData2,
-    });
-  }
 
   if (!response.ok) {
     const text = await response.text();
@@ -158,8 +136,6 @@ async function uploadImageToCollection(
   const data = (await response.json()) as any;
   return data.docId || data.id;
 }
-     
-
 
 // ─── Run HTR on a document page ────────────────────────────────────────────
 
