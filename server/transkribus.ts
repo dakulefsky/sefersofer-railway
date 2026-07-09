@@ -41,12 +41,45 @@ async function getAccessToken(): Promise<string> {
   }
 
   const data = (await response.json()) as any;
+  
+  if (!data.access_token) {
+    throw new Error("Auth succeeded but returned no access token: " + JSON.stringify(data));
+  }
+
   cachedToken = data.access_token;
   tokenExpiresAt = now + data.expires_in * 1000;
   return cachedToken!;
 }
 
-// ─── Main transcription function (Metagrapho API) ──────────────────────────
+// ─── Security Bypass for Redirects ─────────────────────────────────────────
+
+async function fetchWithAuth(url: string, token: string, options: RequestInit = {}): Promise<Response> {
+  const fetchOptions: RequestInit = {
+    ...options,
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      ...(options.headers || {})
+    },
+    // Force Node to stop at the redirect so we can handle it manually
+    redirect: "manual"
+  };
+
+  let response = await fetch(url, fetchOptions);
+
+  // If Transkribus tries to redirect us (301, 302, 307, 308), we manually follow it
+  if (response.status >= 300 && response.status < 400) {
+    const redirectUrl = response.headers.get("location");
+    if (redirectUrl) {
+      console.log(`[Transkribus] API redirected to ${redirectUrl}. Preserving Auth header...`);
+      // Re-fire the request to the new URL with the Authorization header intact
+      response = await fetch(redirectUrl, fetchOptions);
+    }
+  }
+
+  return response;
+}
+
+// ─── Main transcription function ───────────────────────────────────────────
 
 export async function transcribeAndParse(imageUrl: string): Promise<{
   regions: {
@@ -66,10 +99,10 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
     const token = await getAccessToken();
     console.log("[Transkribus] Starting HTR job for model:", modelId);
 
-    const startResponse = await fetch(V1_API_BASE, {
+    // Using our custom fetchWithAuth to survive server redirects
+    const startResponse = await fetchWithAuth(V1_API_BASE, token, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -102,9 +135,7 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
     let isFinished = false;
 
     while (Date.now() < deadline) {
-      const statusRes = await fetch(`${V1_API_BASE}/${processId}`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
+      const statusRes = await fetchWithAuth(`${V1_API_BASE}/${processId}`, token);
       
       const statusData = (await statusRes.json()) as any;
       console.log("[Transkribus] Job status:", statusData.status);
@@ -122,11 +153,9 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
 
     if (!isFinished) throw new Error("Transkribus processing timed out after 2 minutes.");
 
-    // Get PAGE XML result for full word-level coordinate extraction
+    // Get PAGE XML result
     console.log("[Transkribus] Job complete. Fetching PAGE XML...");
-    const xmlRes = await fetch(`${V1_API_BASE}/${processId}/page`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
+    const xmlRes = await fetchWithAuth(`${V1_API_BASE}/${processId}/page`, token);
 
     if (!xmlRes.ok) throw new Error(`Failed to fetch XML: ${xmlRes.status}`);
     const xmlContent = await xmlRes.text();
@@ -152,7 +181,6 @@ function parsePageXml(xmlContent: string) {
     const regionContent = regionMatch[1];
     const words: any[] = [];
     
-    // Extract words from this region natively identified by Transkribus
     const wordRegex = /<Word[^>]*>[\s\S]*?<Unicode>([^<]*)<\/Unicode>[\s\S]*?<\/Word>/g;
     let wordMatch;
 
