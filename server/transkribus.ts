@@ -22,11 +22,12 @@ async function getAccessToken(): Promise<string> {
     throw new Error("Missing TRANSKRIBUS_EMAIL or TRANSKRIBUS_PASSWORD environment variables.");
   }
 
+  // Try standard client ID or fallback to transkribus-api-client if processing-api-client rejects scopes
   const body = new URLSearchParams({
     grant_type: "password",
     username: email,
     password: password,
-    client_id: "processing-api-client", 
+    client_id: "transkribus-api-client", 
   });
 
   const response = await fetch(AUTH_URL, {
@@ -41,17 +42,17 @@ async function getAccessToken(): Promise<string> {
   }
 
   const data = (await response.json()) as any;
-  
   if (!data.access_token) {
     throw new Error("Auth succeeded but returned no access token: " + JSON.stringify(data));
   }
 
   cachedToken = data.access_token;
   tokenExpiresAt = now + data.expires_in * 1000;
+  console.log("[Transkribus] Access token refreshed successfully.");
   return cachedToken!;
 }
 
-// ─── Security Bypass for Redirects ─────────────────────────────────────────
+// ─── Safe Fetch with Redirect & Auth Preservation ──────────────────────────
 
 async function fetchWithAuth(url: string, token: string, options: RequestInit = {}): Promise<Response> {
   const fetchOptions: RequestInit = {
@@ -60,18 +61,15 @@ async function fetchWithAuth(url: string, token: string, options: RequestInit = 
       "Authorization": `Bearer ${token}`,
       ...(options.headers || {})
     },
-    // Force Node to stop at the redirect so we can handle it manually
     redirect: "manual"
   };
 
   let response = await fetch(url, fetchOptions);
 
-  // If Transkribus tries to redirect us (301, 302, 307, 308), we manually follow it
   if (response.status >= 300 && response.status < 400) {
     const redirectUrl = response.headers.get("location");
     if (redirectUrl) {
-      console.log(`[Transkribus] API redirected to ${redirectUrl}. Preserving Auth header...`);
-      // Re-fire the request to the new URL with the Authorization header intact
+      console.log(`[Transkribus] Redirected to ${redirectUrl}. Maintaining Authorization header.`);
       response = await fetch(redirectUrl, fetchOptions);
     }
   }
@@ -97,9 +95,8 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
 
   try {
     const token = await getAccessToken();
-    console.log("[Transkribus] Starting HTR job for model:", modelId);
+    console.log("[Transkribus] Starting V1 Processing job for model:", modelId);
 
-    // Using our custom fetchWithAuth to survive server redirects
     const startResponse = await fetchWithAuth(V1_API_BASE, token, {
       method: "POST",
       headers: {
@@ -129,13 +126,15 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
     
     console.log("[Transkribus] Job started, ID:", processId);
 
-    // Poll for completion
     const maxWaitMs = 2 * 60 * 1000;
     const deadline = Date.now() + maxWaitMs;
     let isFinished = false;
 
     while (Date.now() < deadline) {
       const statusRes = await fetchWithAuth(`${V1_API_BASE}/${processId}`, token);
+      if (!statusRes.ok) {
+        throw new Error(`Failed to check status: ${statusRes.status}`);
+      }
       
       const statusData = (await statusRes.json()) as any;
       console.log("[Transkribus] Job status:", statusData.status);
@@ -153,10 +152,7 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
 
     if (!isFinished) throw new Error("Transkribus processing timed out after 2 minutes.");
 
-    // Get PAGE XML result
-    console.log("[Transkribus] Job complete. Fetching PAGE XML...");
     const xmlRes = await fetchWithAuth(`${V1_API_BASE}/${processId}/page`, token);
-
     if (!xmlRes.ok) throw new Error(`Failed to fetch XML: ${xmlRes.status}`);
     const xmlContent = await xmlRes.text();
 
