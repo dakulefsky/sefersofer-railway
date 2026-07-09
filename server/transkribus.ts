@@ -1,5 +1,5 @@
 // server/transkribus.ts
-// Uses Transkribus Metagrapho (Processing) API for handwritten Hebrew OCR.
+// Uses Transkribus Metagrapho (Processing) API with correct Keycloak client_id scope.
 
 const AUTH_URL = "https://account.readcoop.eu/auth/realms/readcoop/protocol/openid-connect/token";
 const V1_API_BASE = "https://transkribus.eu/processing/v1/processes";
@@ -22,12 +22,12 @@ async function getAccessToken(): Promise<string> {
     throw new Error("Missing TRANSKRIBUS_EMAIL or TRANSKRIBUS_PASSWORD environment variables.");
   }
 
-  // Try standard client ID or fallback to transkribus-api-client if processing-api-client rejects scopes
+  // CORRECTED: Actually using processing-api-client this time!
   const body = new URLSearchParams({
     grant_type: "password",
     username: email,
     password: password,
-    client_id: "transkribus-api-client", 
+    client_id: "processing-api-client", 
   });
 
   const response = await fetch(AUTH_URL, {
@@ -48,7 +48,7 @@ async function getAccessToken(): Promise<string> {
 
   cachedToken = data.access_token;
   tokenExpiresAt = now + data.expires_in * 1000;
-  console.log("[Transkribus] Access token refreshed successfully.");
+  console.log("[Transkribus] Access token obtained with processing scope.");
   return cachedToken!;
 }
 
