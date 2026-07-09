@@ -1,5 +1,5 @@
 // server/transkribus.ts
-// Uses Transkribus Metagrapho (Processing) API with correct Keycloak client_id scope.
+// Uses Transkribus Metagrapho (Processing) API with correct Keycloak client_id scope and Cookie forwarding.
 
 const AUTH_URL = "https://account.readcoop.eu/auth/realms/readcoop/protocol/openid-connect/token";
 const V1_API_BASE = "https://transkribus.eu/processing/v1/processes";
@@ -7,12 +7,13 @@ const V1_API_BASE = "https://transkribus.eu/processing/v1/processes";
 // ─── Token management ────────────────────────────────────────────────────────
 
 let cachedToken: string | null = null;
+let cachedCookies: string | null = null; // Store cookies from auth
 let tokenExpiresAt: number = 0;
 
-async function getAccessToken(): Promise<string> {
+async function getAccessToken(): Promise<{ token: string; cookies: string | null }> {
   const now = Date.now();
   if (cachedToken && now < tokenExpiresAt - 60_000) {
-    return cachedToken;
+    return { token: cachedToken, cookies: cachedCookies };
   }
 
   const email = process.env.TRANSKRIBUS_EMAIL || process.env.TRANSKRIBUS_USER;
@@ -22,7 +23,6 @@ async function getAccessToken(): Promise<string> {
     throw new Error("Missing TRANSKRIBUS_EMAIL or TRANSKRIBUS_PASSWORD environment variables.");
   }
 
-  // CORRECTED: Actually using processing-api-client this time!
   const body = new URLSearchParams({
     grant_type: "password",
     username: email,
@@ -41,6 +41,15 @@ async function getAccessToken(): Promise<string> {
     throw new Error(`Transkribus auth failed: ${response.status} - ${text}`);
   }
 
+  // Capture cookies from the response headers
+  const setCookieHeader = response.headers.get('set-cookie');
+  if (setCookieHeader) {
+      // Very basic cookie parsing for demonstration. 
+      // In a robust app, use a library like 'cookie' or 'set-cookie-parser'
+      cachedCookies = setCookieHeader.split(';')[0]; 
+      console.log("[Transkribus] Captured Auth Cookies:", cachedCookies);
+  }
+
   const data = (await response.json()) as any;
   if (!data.access_token) {
     throw new Error("Auth succeeded but returned no access token: " + JSON.stringify(data));
@@ -49,18 +58,26 @@ async function getAccessToken(): Promise<string> {
   cachedToken = data.access_token;
   tokenExpiresAt = now + data.expires_in * 1000;
   console.log("[Transkribus] Access token obtained with processing scope.");
-  return cachedToken!;
+  
+  return { token: cachedToken, cookies: cachedCookies };
 }
 
 // ─── Safe Fetch with Redirect & Auth Preservation ──────────────────────────
 
-async function fetchWithAuth(url: string, token: string, options: RequestInit = {}): Promise<Response> {
+async function fetchWithAuth(url: string, token: string, cookies: string | null, options: RequestInit = {}): Promise<Response> {
+  const headers: HeadersInit = {
+    "Authorization": `Bearer ${token}`,
+    ...(options.headers || {})
+  };
+
+  // Attach cookies if we have them
+  if (cookies) {
+      headers["Cookie"] = cookies;
+  }
+
   const fetchOptions: RequestInit = {
     ...options,
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      ...(options.headers || {})
-    },
+    headers: headers,
     redirect: "manual"
   };
 
@@ -69,7 +86,7 @@ async function fetchWithAuth(url: string, token: string, options: RequestInit = 
   if (response.status >= 300 && response.status < 400) {
     const redirectUrl = response.headers.get("location");
     if (redirectUrl) {
-      console.log(`[Transkribus] Redirected to ${redirectUrl}. Maintaining Authorization header.`);
+      console.log(`[Transkribus] Redirected to ${redirectUrl}. Maintaining headers.`);
       response = await fetch(redirectUrl, fetchOptions);
     }
   }
@@ -94,10 +111,10 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
   const modelId = parseInt(process.env.TRANSKRIBUS_MODEL_ID || "371705", 10);
 
   try {
-    const token = await getAccessToken();
+    const { token, cookies } = await getAccessToken();
     console.log("[Transkribus] Starting V1 Processing job for model:", modelId);
 
-    const startResponse = await fetchWithAuth(V1_API_BASE, token, {
+    const startResponse = await fetchWithAuth(V1_API_BASE, token, cookies, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -131,7 +148,7 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
     let isFinished = false;
 
     while (Date.now() < deadline) {
-      const statusRes = await fetchWithAuth(`${V1_API_BASE}/${processId}`, token);
+      const statusRes = await fetchWithAuth(`${V1_API_BASE}/${processId}`, token, cookies);
       if (!statusRes.ok) {
         throw new Error(`Failed to check status: ${statusRes.status}`);
       }
@@ -152,7 +169,7 @@ export async function transcribeAndParse(imageUrl: string): Promise<{
 
     if (!isFinished) throw new Error("Transkribus processing timed out after 2 minutes.");
 
-    const xmlRes = await fetchWithAuth(`${V1_API_BASE}/${processId}/page`, token);
+    const xmlRes = await fetchWithAuth(`${V1_API_BASE}/${processId}/page`, token, cookies);
     if (!xmlRes.ok) throw new Error(`Failed to fetch XML: ${xmlRes.status}`);
     const xmlContent = await xmlRes.text();
 
