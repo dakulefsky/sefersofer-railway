@@ -1,11 +1,12 @@
 [build]
 builder = "nixpacks"
 
-[build.nixpacks]
-# Use Node 22 LTS
-nixpacks-metadata = '{"nodejs": "22"}'
-
 [deploy]
-startCommand = "npm run build && npm run start"
+startCommand = "node .next/standalone/server.js"
 healthcheckPath = "/"
-healthcheckTimeout = 30
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[[services]]
+name = "web"
