@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, BookOpen, FileText, Clock } from "lucide-react";
+import { Plus, BookOpen, FileText, Clock, ChevronRight } from "lucide-react";
 
 interface Job {
   id: string;
@@ -44,9 +44,11 @@ export default function DashboardPage() {
         body: JSON.stringify({ name: newJobName.trim() }),
       });
       if (res.ok) {
+        const created = await res.json();
         setNewJobName("");
         setShowForm(false);
-        fetchJobs();
+        // Navigate directly to the new job
+        window.location.href = `/jobs/${created.id}`;
       }
     } finally {
       setCreating(false);
@@ -126,7 +128,7 @@ export default function DashboardPage() {
           {jobs.map((job) => (
             <Link
               key={job.id}
-              href={`/transcribe?jobId=${job.id}`}
+              href={`/jobs/${job.id}`}
               className="bg-white rounded-xl border border-stone-200 hover:border-teal-300 hover:shadow-md p-5 transition-all group"
             >
               <div className="flex items-start justify-between mb-3">
@@ -149,15 +151,18 @@ export default function DashboardPage() {
               {job.description && (
                 <p className="text-xs text-stone-400 mb-3 line-clamp-2">{job.description}</p>
               )}
-              <div className="flex items-center gap-3 text-xs text-stone-400">
-                <span className="flex items-center gap-1">
-                  <FileText className="w-3 h-3" />
-                  {job.pageCount} page{job.pageCount !== 1 ? "s" : ""}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  {new Date(job.updatedAt).toLocaleDateString()}
-                </span>
+              <div className="flex items-center justify-between text-xs text-stone-400">
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1">
+                    <FileText className="w-3 h-3" />
+                    {job.pageCount} page{job.pageCount !== 1 ? "s" : ""}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {new Date(job.updatedAt).toLocaleDateString()}
+                  </span>
+                </div>
+                <ChevronRight className="w-4 h-4 text-stone-300 group-hover:text-teal-500 transition-colors" />
               </div>
             </Link>
           ))}
