@@ -1,13 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Upload, ImageIcon, Loader2, CheckCircle, AlertCircle, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
 type UploadStatus = "idle" | "uploading" | "transcribing" | "done" | "error";
 
-export default function TranscribePage() {
+export default function TranscribePageWrapper() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-stone-50 flex items-center justify-center">
+          <Loader2 className="w-6 h-6 text-stone-400 animate-spin" />
+        </div>
+      }
+    >
+      <TranscribePage />
+    </Suspense>
+  );
+}
+
+function TranscribePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const jobId = searchParams.get("jobId");

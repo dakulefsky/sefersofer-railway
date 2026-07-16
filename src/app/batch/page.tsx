@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -26,7 +26,21 @@ interface QueuedFile {
   pageId?: string;
 }
 
-export default function BatchUploadPage() {
+export default function BatchUploadPageWrapper() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-stone-50 flex items-center justify-center">
+          <Loader2 className="w-6 h-6 text-stone-400 animate-spin" />
+        </div>
+      }
+    >
+      <BatchUploadPage />
+    </Suspense>
+  );
+}
+
+function BatchUploadPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const jobId = searchParams.get("jobId");
