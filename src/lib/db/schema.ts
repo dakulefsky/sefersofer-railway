@@ -24,6 +24,7 @@ export const pageStatusEnum = pgEnum("page_status", [
   "processing",
   "transcribed",
   "reviewed",
+  "failed",
 ]);
 
 // ─── Jobs ─────────────────────────────────────────────────────────────────────

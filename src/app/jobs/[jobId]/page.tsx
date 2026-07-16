@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Upload,
   Trash2,
+  Download,
 } from "lucide-react";
 
 interface Page {
@@ -172,14 +173,32 @@ export default function JobDetailPage() {
               </span>
             </div>
           </div>
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-          >
-            <Trash2 className="w-4 h-4" />
-            Delete Job
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              href={`/api/export?jobId=${jobId}&format=txt`}
+              download
+              className="flex items-center gap-1.5 text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export TXT
+            </a>
+            <a
+              href={`/api/export?jobId=${jobId}&format=json`}
+              download
+              className="flex items-center gap-1.5 text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              JSON
+            </a>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </button>
+          </div>
         </div>
 
         {/* Pages grid */}

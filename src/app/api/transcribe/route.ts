@@ -36,19 +36,27 @@ const TranscriptionResponseSchema = z.object({
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are an expert in Hebrew paleography and handwritten text recognition (HTR).
-Your task is to transcribe handwritten Hebrew text from manuscript images.
+Your task is to transcribe handwritten Hebrew text from manuscript images with maximum accuracy.
 
 CRITICAL RULES:
 1. Output ONLY valid JSON — no markdown, no code blocks, no explanations.
-2. Read Hebrew text RIGHT-TO-LEFT. Preserve the original word order.
+2. Read Hebrew text RIGHT-TO-LEFT. Preserve the original reading order as a native Hebrew reader would.
 3. Identify distinct text regions: main body, right margin, left margin, interlinear insertions.
 4. For each word, provide:
-   - "text": the Hebrew word exactly as written (Unicode Hebrew characters)
-   - "confidence": a float from 0.0 to 1.0 (0.3 = very uncertain, 0.95 = very certain)
+   - "text": the Hebrew word exactly as written (Unicode Hebrew characters, including niqqud if present)
+   - "confidence": a float from 0.0 to 1.0 reflecting your certainty (be honest — 0.3 = very uncertain, 0.7 = somewhat confident, 0.95 = very certain)
    - "flagged": true if the word is ambiguous, damaged, or unclear
-5. Handle common Hebrew cursive variants: swirly פ, looped ל, connected ת.
+5. HEBREW CURSIVE RECOGNITION GUIDE:
+   - Recognize swirly/rounded פ (pe) vs כ (kaf) — pe has a more pronounced spiral
+   - Distinguish looped ל (lamed) ascending strokes from tall ך (final kaf)
+   - Handle connected ת (tav) that flows into the next letter
+   - Differentiate ב (bet) from כ (kaf) in cursive — bet has a sharper bottom
+   - Watch for ר (resh) vs ד (dalet) — dalet has a more pronounced right angle
+   - Distinguish ו (vav) from ז (zayin) — zayin curves left at top
+   - Handle final forms: ם ן ף ך ץ at word endings
 6. If a word is illegible, use "?" as the text with confidence 0.1 and flagged: true.
-7. Do NOT hallucinate words. If you cannot read it, flag it.
+7. Do NOT hallucinate words. If you cannot read something, flag it rather than guess.
+8. Preserve line breaks between regions but join words within a line.
 
 Output schema:
 {
@@ -128,62 +136,76 @@ export async function POST(req: NextRequest) {
     .set({ status: "processing", updatedAt: new Date() })
     .where(eq(pages.id, pageId));
 
-  // 6. Call OpenAI GPT-4o Vision
-  const openai = new OpenAI({ apiKey: openaiKey });
+  // 6. Call OpenAI GPT-4o Vision (with retry)
+  const openai = new OpenAI({ apiKey: openaiKey, timeout: 120_000 });
 
   let transcriptionResult: z.infer<typeof TranscriptionResponseSchema>;
+  const MAX_RETRIES = 2;
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      response_format: { type: "json_object" },
-      max_tokens: 4096,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mimeType};base64,${imageBase64}`,
-                detail: "high",
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        response_format: { type: "json_object" },
+        max_tokens: 4096,
+        temperature: 0.1, // Low temperature for consistent transcription
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${mimeType};base64,${imageBase64}`,
+                  detail: "high",
+                },
               },
-            },
-            {
-              type: "text",
-              text: "Transcribe all Hebrew handwritten text in this image. Return only the JSON object.",
-            },
-          ],
-        },
-      ],
-    });
+              {
+                type: "text",
+                text: "Transcribe all Hebrew handwritten text in this image. Return only the JSON object matching the schema.",
+              },
+            ],
+          },
+        ],
+      });
 
-    const rawContent = response.choices[0]?.message?.content;
-    if (!rawContent) {
-      throw new Error("OpenAI returned an empty response.");
+      const rawContent = response.choices[0]?.message?.content;
+      if (!rawContent) {
+        throw new Error("OpenAI returned an empty response.");
+      }
+
+      const rawJson = JSON.parse(rawContent);
+      const validated = TranscriptionResponseSchema.safeParse(rawJson);
+
+      if (!validated.success) {
+        console.error("[transcribe] Schema validation failed (attempt", attempt + 1, "):", validated.error.flatten());
+        if (attempt < MAX_RETRIES) continue; // Retry
+        throw new Error("OpenAI response did not match expected schema after retries.");
+      }
+
+      transcriptionResult = validated.data;
+      break; // Success
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown OpenAI error";
+      console.error(`[transcribe] Attempt ${attempt + 1} error:`, message);
+
+      if (attempt >= MAX_RETRIES) {
+        await db
+          .update(pages)
+          .set({ status: "failed", updatedAt: new Date() })
+          .where(eq(pages.id, pageId));
+
+        return NextResponse.json({ error: `Transcription failed: ${message}` }, { status: 502 });
+      }
+
+      // Wait before retry (exponential backoff)
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
     }
-
-    const rawJson = JSON.parse(rawContent);
-    const validated = TranscriptionResponseSchema.safeParse(rawJson);
-
-    if (!validated.success) {
-      console.error("[transcribe] OpenAI response failed schema validation:", validated.error);
-      throw new Error("OpenAI response did not match expected schema.");
-    }
-
-    transcriptionResult = validated.data;
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown OpenAI error";
-    console.error("[transcribe] OpenAI error:", message);
-
-    await db
-      .update(pages)
-      .set({ status: "pending", updatedAt: new Date() })
-      .where(eq(pages.id, pageId));
-
-    return NextResponse.json({ error: `Transcription failed: ${message}` }, { status: 502 });
   }
+
+  // TypeScript safety — transcriptionResult is guaranteed to be set if we reach here
+  transcriptionResult = transcriptionResult!;
 
   // 7. Save results to database
   try {

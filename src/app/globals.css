@@ -6,6 +6,8 @@
   :root {
     --teal-brand: #0d9488;
     --teal-light: #ccfbf1;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   }
 
   * {
@@ -14,15 +16,52 @@
 
   html {
     scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    min-height: 100vh;
   }
 
   /* Hebrew text rendering */
-  .hebrew-text {
-    font-family: "Frank Ruhl Libre", serif;
+  .font-hebrew {
+    font-family: "Frank Ruhl Libre", "David Libre", serif;
     direction: rtl;
     unicode-bidi: embed;
     letter-spacing: 0.02em;
     line-height: 1.8;
+  }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: 2px solid var(--teal-brand);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: var(--teal-light);
+    color: #134e4a;
+  }
+}
+
+@layer components {
+  /* Smooth button press */
+  .btn-press {
+    transition: transform 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+  }
+  .btn-press:active {
+    transform: scale(0.97);
+  }
+
+  /* Card hover */
+  .card-hover {
+    transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out), transform 200ms var(--ease-out);
+  }
+  .card-hover:hover {
+    transform: translateY(-1px);
   }
 }
 
@@ -30,5 +69,40 @@
   .rtl-text {
     direction: rtl;
     text-align: right;
+  }
+
+  /* Stagger animation for lists */
+  .stagger-in > * {
+    opacity: 0;
+    animation: fadeInUp 300ms var(--ease-out) forwards;
+  }
+  .stagger-in > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger-in > *:nth-child(2) { animation-delay: 50ms; }
+  .stagger-in > *:nth-child(3) { animation-delay: 100ms; }
+  .stagger-in > *:nth-child(4) { animation-delay: 150ms; }
+  .stagger-in > *:nth-child(5) { animation-delay: 200ms; }
+  .stagger-in > *:nth-child(6) { animation-delay: 250ms; }
+
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  html {
+    scroll-behavior: auto;
   }
 }

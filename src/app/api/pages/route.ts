@@ -13,7 +13,7 @@ const BUCKET = "manuscripts";
 const CreatePageSchema = z.object({
   jobId: z.string().uuid(),
   label: z.string().optional(),
-  pageNumber: z.number().int().positive().default(1),
+  pageNumber: z.number().int().positive().optional(), // Auto-increments if not provided
   fileName: z.string().min(1),
   contentType: z.enum(["image/jpeg", "image/png", "image/webp"]).default("image/jpeg"),
 });
@@ -44,12 +44,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Job not found or access denied" }, { status: 404 });
   }
 
+  // Auto-increment page number if not provided
+  let resolvedPageNumber = pageNumber;
+  if (!resolvedPageNumber) {
+    const existingPages = await db
+      .select({ pageNumber: pages.pageNumber })
+      .from(pages)
+      .where(eq(pages.jobId, jobId));
+    resolvedPageNumber = existingPages.length > 0
+      ? Math.max(...existingPages.map((p) => p.pageNumber)) + 1
+      : 1;
+  }
+
   // Create the page record first to get the ID
   const [newPage] = await db
     .insert(pages)
     .values({
       jobId,
-      pageNumber,
+      pageNumber: resolvedPageNumber,
       label,
       status: "pending",
     })
