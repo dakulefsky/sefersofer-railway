@@ -1,28 +1,10 @@
-import { Suspense } from "react";
+export const dynamic = "force-dynamic";
+
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import DashboardNav from "@/components/DashboardNav";
-import { Loader2 } from "lucide-react";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-stone-50 flex items-center justify-center">
-          <Loader2 className="w-6 h-6 text-stone-400 animate-spin" />
-        </div>
-      }
-    >
-      <DashboardLayoutContent>{children}</DashboardLayoutContent>
-    </Suspense>
-  );
-}
-
-async function DashboardLayoutContent({
+export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
