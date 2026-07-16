@@ -17,7 +17,7 @@ const CreatePageSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
 
   if (error || !user) {
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
 
 // GET /api/pages?pageId=xxx — get a page with all its words
 export async function GET(req: NextRequest) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
 
   if (error || !user) {

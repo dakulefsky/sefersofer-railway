@@ -7,7 +7,7 @@ import { eq, desc, count } from "drizzle-orm";
 
 // GET /api/jobs — list all jobs for the current user
 export async function GET() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
 
   if (error || !user) {
@@ -48,7 +48,7 @@ const CreateJobSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
 
   if (error || !user) {

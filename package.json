@@ -13,30 +13,30 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "next": "14.2.29",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "@supabase/supabase-js": "^2.45.4",
     "@supabase/ssr": "^0.5.1",
-    "drizzle-orm": "^0.33.0",
-    "postgres": "^3.4.4",
-    "openai": "^4.67.3",
-    "zod": "^3.23.8",
-    "lucide-react": "^0.453.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
+    "lucide-react": "^0.453.0",
+    "next": "^15.5.20",
+    "openai": "^4.67.3",
+    "postgres": "^3.4.4",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "tailwind-merge": "^2.5.4",
-    "class-variance-authority": "^0.7.1"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^20.16.10",
     "@types/react": "^18.3.10",
     "@types/react-dom": "^18.3.0",
-    "drizzle-kit": "^0.24.2",
-    "typescript": "^5.6.2",
-    "tailwindcss": "^3.4.13",
     "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.47",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^8.57.1",
-    "eslint-config-next": "14.2.29"
+    "eslint-config-next": "^15.5.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.2"
   }
 }
