@@ -9,8 +9,8 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Inter", "sans-serif"],
-        hebrew: ["Frank Ruhl Libre", "serif"],
+        sans: ["var(--font-inter)", "system-ui", "sans-serif"],
+        hebrew: ["'Frank Ruhl Libre'", "serif"],
       },
     },
   },

@@ -9,10 +9,13 @@ const CorrectionSchema = z.object({
   correctedText: z.string().min(1),
 });
 
+// Next.js 15: params is a Promise
 export async function POST(
   req: NextRequest,
-  { params }: { params: { wordId: string } }
+  { params }: { params: Promise<{ wordId: string }> }
 ) {
+  const { wordId } = await params;
+
   const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
 
@@ -35,7 +38,7 @@ export async function POST(
       pageId: words.pageId,
     })
     .from(words)
-    .where(eq(words.id, params.wordId))
+    .where(eq(words.id, wordId))
     .limit(1);
 
   if (!word) {
@@ -82,7 +85,7 @@ export async function POST(
       isFlagged: false,
       updatedAt: new Date(),
     })
-    .where(eq(words.id, word.id));
+    .where(eq(words.id, wordId));
 
   return NextResponse.json({ success: true, correction });
 }
