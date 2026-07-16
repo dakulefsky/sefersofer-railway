@@ -43,8 +43,7 @@ export const db: PostgresJsDatabase<typeof schema> = new Proxy(
   {
     get(_target, prop: string | symbol) {
       const instance = getDb();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (instance as any)[prop];
+      return (instance as unknown as Record<string | symbol, unknown>)[prop];
     },
   }
 );
